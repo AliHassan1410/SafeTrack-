@@ -1,0 +1,195 @@
+import 'package:flutter/material.dart';
+import 'package:safetrack/utils/app_colors.dart';
+import 'package:safetrack/services/incident_services.dart';
+
+class IncidentHistoryScreen extends StatefulWidget {
+  const IncidentHistoryScreen({super.key});
+
+  @override
+  State<IncidentHistoryScreen> createState() => _IncidentHistoryScreenState();
+}
+
+class _IncidentHistoryScreenState extends State<IncidentHistoryScreen> {
+  List<dynamic> reports = [];
+  bool isLoading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _fetchIncidents();
+  }
+
+  Future<void> _fetchIncidents() async {
+    try {
+      final incidents = await IncidentService.getIncidents();
+      if (mounted) {
+        setState(() {
+          reports = incidents;
+          isLoading = false;
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          isLoading = false;
+        });
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+
+    return Scaffold(
+      backgroundColor: AppColors.background,
+      appBar: AppBar(
+        flexibleSpace: Container(
+          decoration: const BoxDecoration(
+            gradient: LinearGradient(
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+              colors: [AppColors.primary, Color(0xFF1E40AF)],
+            ),
+          ),
+        ),
+        elevation: 0,
+        title: const Text(
+          "Incident History",
+          style: TextStyle(
+            color: Colors.white,
+            fontWeight: FontWeight.w800,
+          ),
+        ),
+        centerTitle: true,
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back_ios_new_rounded, color: Colors.white),
+          onPressed: () => Navigator.pop(context),
+        ),
+      ),
+
+      body: isLoading 
+        ? const Center(child: CircularProgressIndicator(color: AppColors.primary))
+        : reports.isEmpty
+            ? const Center(
+                child: Text(
+                  "No incident history",
+                  style: TextStyle(color: AppColors.textSecondary, fontSize: 16),
+                ),
+              )
+            : ListView.builder(
+                padding: const EdgeInsets.all(16),
+                itemCount: reports.length,
+                itemBuilder: (context, index) {
+                  final data = reports[index];
+                  final title = data['title'] ?? data['type'] ?? 'Incident';
+                  final category = data['type'] ?? 'General';
+                  final status = data['status'] ?? 'Pending';
+                  
+                  String timeStr = "Recently";
+                  if (data['createdAt'] != null) {
+                       try {
+                           final dt = DateTime.parse(data['createdAt']).toLocal();
+                           timeStr = "${dt.day}/${dt.month}/${dt.year} ${dt.hour}:${dt.minute.toString().padLeft(2, '0')}";
+                       } catch(_) {}
+                  }
+
+                  return Container(
+            margin: const EdgeInsets.only(bottom: 12),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(12),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withOpacity(0.05),
+                  blurRadius: 8,
+                  offset: const Offset(0, 2),
+                ),
+              ],
+            ),
+            child: ListTile(
+              contentPadding: const EdgeInsets.all(16),
+
+              leading: Container(
+                width: 50,
+                height: 50,
+                decoration: BoxDecoration(
+                  color: AppColors.primary.withOpacity(0.1),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Icon(
+                  _getCategoryIcon(category),
+                  color: AppColors.primary,
+                ),
+              ),
+
+              title: Text(
+                title,
+                style: const TextStyle(fontWeight: FontWeight.bold),
+              ),
+
+              subtitle: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const SizedBox(height: 4),
+                  Text(
+                    category,
+                    style: TextStyle(color: Colors.grey[600], fontSize: 12),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    timeStr,
+                    style: TextStyle(color: Colors.grey[500], fontSize: 11),
+                  ),
+                ],
+              ),
+
+              trailing: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                decoration: BoxDecoration(
+                  color: _getStatusColor(status).withOpacity(0.1),
+                  borderRadius: BorderRadius.circular(20),
+                ),
+                child: Text(
+                  status.toUpperCase(),
+                  style: TextStyle(
+                    color: _getStatusColor(status),
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+            ),
+          );
+        },
+      ),
+    );
+  }
+
+  IconData _getCategoryIcon(String category) {
+    switch (category) {
+      case 'Accident':
+        return Icons.car_crash_rounded;
+      case 'Fire':
+        return Icons.local_fire_department_rounded;
+      case 'Medical Emergency':
+        return Icons.medical_services_rounded;
+      case 'Crime':
+        return Icons.security_rounded;
+      default:
+        return Icons.warning_rounded;
+    }
+  }
+
+  Color _getStatusColor(String status) {
+    switch (status.toLowerCase()) {
+      case 'resolved':
+        return Colors.green;
+      case 'in progress':
+        return Colors.orange;
+      case 'rejected':
+        return Colors.red;
+      default:
+        return Colors.blue;
+    }
+  }
+}

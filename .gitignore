@@ -1,0 +1,14 @@
+# Flutter / Frontend
+build/
+.dart_tool/
+.packages
+.pub/
+
+# Dependency lock (optional safe)
+*.lock
+
+# System files
+.DS_Store
+
+# IDE files
+.vscode/

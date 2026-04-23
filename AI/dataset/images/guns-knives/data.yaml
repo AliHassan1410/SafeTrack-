@@ -1,0 +1,9 @@
+train: C:/Users/LINK COMPUTER/Desktop/Safe-Track/backend/AI/dataset/images/guns-knives/train/images
+val:   C:/Users/LINK COMPUTER/Desktop/Safe-Track/backend/AI/dataset/images/guns-knives/valid/images
+test:  C:/Users/LINK COMPUTER/Desktop/Safe-Track/backend/AI/dataset/images/guns-knives/test/images
+
+nc: 2
+names: ["knife", "pistol"]
+
+
+
