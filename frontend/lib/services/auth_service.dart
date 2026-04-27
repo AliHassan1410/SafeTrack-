@@ -9,12 +9,14 @@ class User {
   final String name;
   final String email;
   final String role;
+  final String? responderType; // 🚑 Added responderType
 
   User({
     required this.uid,
     required this.name,
     required this.email,
     required this.role,
+    this.responderType,
   });
 }
 
@@ -54,6 +56,7 @@ class AuthService {
         name: data['name'] ?? '',
         email: data['email'] ?? '',
         role: data['role'] ?? '',
+        responderType: data['responderType'], // 🚑 Added responderType
       );
     }
   }
@@ -70,6 +73,7 @@ class AuthService {
       name: userData['name'] ?? '',
       email: userData['email'] ?? '',
       role: userData['role'] ?? 'reporter',
+      responderType: userData['responderType'], // 🚑 Added responderType
     );
 
     final prefs = await SharedPreferences.getInstance();
@@ -107,12 +111,13 @@ class AuthService {
   }
 
   // ================= REGISTER =================
-  Future<void> signUp({
+  Future<Map<String, dynamic>> signUp({
     required String name,
     required String email,
     required String password,
     required String phone,
     required String role,
+    String? responderType,
   }) async {
     final response = await http.post(
       Uri.parse('$baseUrl/api/auth/register'),
@@ -123,19 +128,42 @@ class AuthService {
         'password': password,
         'phone': phone,
         'role': role,
+        if (responderType != null) 'responderType': responderType,
       }),
     );
 
     if (response.statusCode == 201) {
-      final jsonResponse = jsonDecode(response.body);
+      // Backend now returns OTP instruction instead of user object
+      return jsonDecode(response.body);
+    } else {
+      final error = jsonDecode(response.body);
+      throw Exception(error['message'] ?? 'Failed to sign up');
+    }
+  }
 
+  // ================= VERIFY EMAIL =================
+  Future<void> verifyEmail({
+    required String email,
+    required String otp,
+  }) async {
+    final response = await http.post(
+      Uri.parse('$baseUrl/api/auth/verify-email'),
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode({
+        'email': email,
+        'otp': otp,
+      }),
+    );
+
+    if (response.statusCode == 200) {
+      final jsonResponse = jsonDecode(response.body);
       await _saveUserData(
         jsonResponse['user'],
         jsonResponse['user']['token'],
       );
     } else {
       final error = jsonDecode(response.body);
-      throw Exception(error['message'] ?? 'Failed to sign up');
+      throw Exception(error['message'] ?? 'Failed to verify email');
     }
   }
 

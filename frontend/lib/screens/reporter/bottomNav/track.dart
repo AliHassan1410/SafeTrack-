@@ -1,53 +1,184 @@
 import 'package:flutter/material.dart';
+import 'package:google_maps_flutter/google_maps_flutter.dart';
+import 'package:geolocator/geolocator.dart';
+import 'package:socket_io_client/socket_io_client.dart' as IO;
 import 'package:safetrack/utils/app_colors.dart';
 import '../bottomNav/bottom_nav_bar.dart';
 
 class TrackResponder extends StatefulWidget {
-  const TrackResponder({super.key});
+  final Map<String, dynamic>? activeIncident;
+  const TrackResponder({super.key, this.activeIncident});
 
   @override
   State<TrackResponder> createState() => _TrackResponderState();
 }
 
 class _TrackResponderState extends State<TrackResponder> {
-  final List<Map<String, dynamic>> responders = [
-    {
-      'name': 'Officer Rehan Ali',
-      'type': 'Police Officer',
-      'badge': 'ID: PL-9876',
-      'eta': '3 min',
-      'distance': '0.8 km',
-      'status': 'On Route',
-      'color': AppColors.primary,
-      'icon': Icons.local_police_rounded,
-    },
-    {
-      'name': 'GH Ambulance 12',
-      'type': 'Medical Response',
-      'badge': 'ID: AMB-4521',
-      'eta': '7 min',
-      'distance': '1.9 km',
-      'status': 'on route',
-      'color': AppColors.secondary,
-      'icon': Icons.medical_services_rounded,
-    },
-  ];
+  GoogleMapController? _mapController;
+  LatLng? _reporterLocation;
+  LatLng? _responderLocation;
+  late IO.Socket _socket;
+  
+  bool _isLoading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _initLocation();
+    _initSocket();
+  }
+
+  Future<void> _initLocation() async {
+    bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
+    if (!serviceEnabled) return;
+
+    LocationPermission permission = await Geolocator.checkPermission();
+    if (permission == LocationPermission.denied) {
+      permission = await Geolocator.requestPermission();
+      if (permission != LocationPermission.whileInUse && permission != LocationPermission.always) {
+        return;
+      }
+    }
+
+    Position pos = await Geolocator.getCurrentPosition(desiredAccuracy: LocationAccuracy.high);
+    if (mounted) {
+      setState(() {
+        _reporterLocation = LatLng(pos.latitude, pos.longitude);
+        _isLoading = false;
+      });
+      _fitMapBounds();
+    }
+  }
+
+  void _initSocket() {
+    // Determine the incident ID
+    String incidentId = widget.activeIncident?['_id'] ?? "test_incident_id";
+
+    // Initialize Socket.IO connection to Backend
+    // Use 10.0.2.2 for Android Emulator, or your local network IP for real devices.
+    _socket = IO.io('http://10.0.2.2:5000', <String, dynamic>{
+      'transports': ['websocket'],
+      'autoConnect': false,
+    });
+    
+    _socket.connect();
+    
+    _socket.onConnect((_) {
+      print('Connected to Socket');
+      // Join the tracking room for this specific incident
+      _socket.emit('join_incident', incidentId);
+    });
+    
+    _socket.on('location_update', (data) {
+      print("Responder Location Updated: $data");
+      if (mounted) {
+        setState(() {
+          _responderLocation = LatLng(data['lat'], data['lng']);
+        });
+        _fitMapBounds();
+      }
+    });
+  }
+
+  void _fitMapBounds() {
+    if (_mapController == null) return;
+
+    if (_reporterLocation != null && _responderLocation != null) {
+      LatLngBounds bounds;
+      if (_reporterLocation!.latitude > _responderLocation!.latitude &&
+          _reporterLocation!.longitude > _responderLocation!.longitude) {
+        bounds = LatLngBounds(southwest: _responderLocation!, northeast: _reporterLocation!);
+      } else if (_reporterLocation!.longitude > _responderLocation!.longitude) {
+        bounds = LatLngBounds(
+            southwest: LatLng(_reporterLocation!.latitude, _responderLocation!.longitude),
+            northeast: LatLng(_responderLocation!.latitude, _reporterLocation!.longitude));
+      } else if (_reporterLocation!.latitude > _responderLocation!.latitude) {
+        bounds = LatLngBounds(
+            southwest: LatLng(_responderLocation!.latitude, _reporterLocation!.longitude),
+            northeast: LatLng(_reporterLocation!.latitude, _responderLocation!.longitude));
+      } else {
+        bounds = LatLngBounds(southwest: _reporterLocation!, northeast: _responderLocation!);
+      }
+      
+      _mapController!.animateCamera(CameraUpdate.newLatLngBounds(bounds, 80));
+    } else if (_reporterLocation != null) {
+      _mapController!.animateCamera(CameraUpdate.newLatLngZoom(_reporterLocation!, 15));
+    }
+  }
+
+  @override
+  void dispose() {
+    _socket.disconnect();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: AppColors.background,
       body: SafeArea(
-        child: SingleChildScrollView(
-          child: Column(
-            children: [
-              _buildHeader(),
-              _buildMapView(),
-              _buildETAAndDistance(),
-              _buildRespondersSection(),
-              const SizedBox(height: 20), // Bottom padding
-            ],
-          ),
+        child: Column(
+          children: [
+            _buildHeader(),
+            Expanded(
+              child: _isLoading 
+                ? const Center(child: CircularProgressIndicator(color: AppColors.primary))
+                : Stack(
+                    children: [
+                      GoogleMap(
+                        initialCameraPosition: CameraPosition(
+                          target: _reporterLocation ?? const LatLng(0, 0),
+                          zoom: 14.0,
+                        ),
+                        onMapCreated: (controller) {
+                          _mapController = controller;
+                          _fitMapBounds();
+                        },
+                        myLocationEnabled: true,
+                        myLocationButtonEnabled: false,
+                        markers: {
+                          if (_reporterLocation != null)
+                            Marker(
+                              markerId: const MarkerId('reporter'),
+                              position: _reporterLocation!,
+                              infoWindow: const InfoWindow(title: 'Your Location'),
+                              icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueRed),
+                            ),
+                          if (_responderLocation != null)
+                            Marker(
+                              markerId: const MarkerId('responder'),
+                              position: _responderLocation!,
+                              infoWindow: const InfoWindow(title: 'Responder'),
+                              icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueBlue),
+                            ),
+                        },
+                      ),
+                      
+                      // Floating ETA & Distance card
+                      Positioned(
+                        bottom: 20,
+                        left: 20,
+                        right: 20,
+                        child: _buildETAAndDistance(),
+                      ),
+                      
+                      // Floating Top Refresh Button
+                      Positioned(
+                        top: 20,
+                        right: 20,
+                        child: FloatingActionButton(
+                          mini: true,
+                          backgroundColor: Colors.white,
+                          onPressed: () {
+                             _initLocation();
+                          },
+                          child: const Icon(Icons.my_location, color: AppColors.primary),
+                        ),
+                      )
+                    ],
+                  ),
+            ),
+          ],
         ),
       ),
       bottomNavigationBar: const BottomNavBar(currentIndex: 2),
@@ -118,8 +249,8 @@ class _TrackResponderState extends State<TrackResponder> {
           ),
           const SizedBox(height: 16),
           Text(
-            "GPS Active · Real-time responder tracking enabled. "
-            "Your location is being securely updated.",
+            "GPS Active · Live map connection established. "
+            "Responder's movements will automatically update here.",
             style: TextStyle(
               color: Colors.white.withOpacity(0.7),
               fontSize: 14,
@@ -131,327 +262,70 @@ class _TrackResponderState extends State<TrackResponder> {
     );
   }
 
-  Widget _buildMapView() {
-    return Container(
-      height: 280, // Reduced height
-      margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-      decoration: BoxDecoration(
-        color: AppColors.cardBg,
-        borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: AppColors.textSecondary.withOpacity(0.2)),
-        boxShadow: [
-          BoxShadow(
-            color: AppColors.textSecondary.withOpacity(0.1),
-            blurRadius: 10,
-            offset: const Offset(0, 4),
-          ),
-        ],
-      ),
-      child: Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Container(
-              width: 70,
-              height: 70,
-              decoration: BoxDecoration(
-                color: AppColors.primary.withOpacity(0.1),
-                shape: BoxShape.circle,
-              ),
-              child: const Icon(
-                Icons.location_pin,
-                color: AppColors.primary,
-                size: 36,
-              ),
-            ),
-            const SizedBox(height: 16),
-            const Text(
-              "Live Map View",
-              style: TextStyle(
-                fontSize: 18,
-                fontWeight: FontWeight.w700,
-                color: AppColors.primary,
-              ),
-            ),
-            const SizedBox(height: 6),
-            Text(
-              "Your location is being securely tracked",
-              style: TextStyle(fontSize: 13, color: AppColors.textSecondary.withOpacity(0.6)),
-            ),
-            const SizedBox(height: 16),
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 10),
-              decoration: BoxDecoration(
-                color: AppColors.primary,
-                borderRadius: BorderRadius.circular(12),
-              ),
-              child: const Text(
-                "Refresh Location",
-                style: TextStyle(
-                  color: AppColors.background,
-                  fontSize: 14,
-                  fontWeight: FontWeight.w500,
-                ),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
   Widget _buildETAAndDistance() {
     return Container(
-      margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
       decoration: BoxDecoration(
-        color: AppColors.background,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: AppColors.textSecondary.withOpacity(0.2)),
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(20),
         boxShadow: [
           BoxShadow(
-            color: AppColors.textSecondary.withOpacity(0.05),
-            blurRadius: 8,
-            offset: const Offset(0, 2),
+            color: Colors.black.withOpacity(0.1),
+            blurRadius: 15,
+            offset: const Offset(0, 5),
           ),
         ],
       ),
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
-          // ETA on left - compact layout
           Expanded(
             child: Row(
               children: [
                 Container(
-                  width: 32,
-                  height: 32,
+                  padding: const EdgeInsets.all(10),
                   decoration: BoxDecoration(
                     color: AppColors.success.withOpacity(0.1),
                     shape: BoxShape.circle,
                   ),
-                  child: const Icon(
-                    Icons.access_time_filled,
-                    color: AppColors.success,
-                    size: 16,
-                  ),
+                  child: const Icon(Icons.access_time_filled, color: AppColors.success, size: 20),
                 ),
                 const SizedBox(width: 12),
                 Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
                   children: [
-                    const Text(
-                      "ETA",
-                      style: TextStyle(
-                        fontSize: 12,
-                        color: AppColors.textSecondary,
-                        fontWeight: FontWeight.w500,
-                      ),
-                    ),
-                    const SizedBox(height: 2),
-                    const Text(
-                      "3 min",
-                      style: TextStyle(
-                        fontSize: 18,
-                        fontWeight: FontWeight.w700,
-                        color: AppColors.primary,
-                      ),
-                    ),
+                    const Text("ETA", style: TextStyle(fontSize: 12, color: AppColors.textSecondary, fontWeight: FontWeight.w600)),
+                    Text(_responderLocation != null ? "Tracking..." : "Waiting...", style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: AppColors.primary)),
                   ],
                 ),
               ],
             ),
           ),
-
-          // Vertical divider
-          Container(width: 1, height: 30, color: AppColors.textSecondary.withOpacity(0.3)),
-
-          // Distance on right - compact layout
+          Container(width: 1, height: 40, color: Colors.grey.withOpacity(0.3)),
           Expanded(
             child: Row(
               mainAxisAlignment: MainAxisAlignment.end,
               children: [
                 Column(
                   crossAxisAlignment: CrossAxisAlignment.end,
+                  mainAxisSize: MainAxisSize.min,
                   children: [
-                    const Text(
-                      "Distance",
-                      style: TextStyle(
-                        fontSize: 12,
-                        color: AppColors.textSecondary,
-                        fontWeight: FontWeight.w500,
-                      ),
-                    ),
-                    const SizedBox(height: 2),
-                    const Text(
-                      "0.8 km",
-                      style: TextStyle(
-                        fontSize: 18,
-                        fontWeight: FontWeight.w700,
-                        color: AppColors.primary,
-                      ),
-                    ),
+                    const Text("Distance", style: TextStyle(fontSize: 12, color: AppColors.textSecondary, fontWeight: FontWeight.w600)),
+                    Text(_responderLocation != null ? "Updating..." : "--", style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: AppColors.primary)),
                   ],
                 ),
                 const SizedBox(width: 12),
                 Container(
-                  width: 32,
-                  height: 32,
+                  padding: const EdgeInsets.all(10),
                   decoration: BoxDecoration(
                     color: AppColors.primary.withOpacity(0.1),
                     shape: BoxShape.circle,
                   ),
-                  child: const Icon(
-                    Icons.linear_scale,
-                    color: AppColors.primary,
-                    size: 16,
-                  ),
+                  child: const Icon(Icons.directions_car_rounded, color: AppColors.primary, size: 20),
                 ),
               ],
             ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildRespondersSection() {
-    return Container(
-      margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: AppColors.background,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: AppColors.textSecondary.withOpacity(0.2)),
-        boxShadow: [
-          BoxShadow(
-            color: AppColors.textSecondary.withOpacity(0.05),
-            blurRadius: 10,
-            offset: const Offset(0, 4),
-          ),
-        ],
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Text(
-            "Responding Units",
-            style: TextStyle(
-              fontSize: 18,
-              fontWeight: FontWeight.w700,
-              color: AppColors.primary,
-            ),
-          ),
-          const SizedBox(height: 16),
-          ...responders.map(
-            (responder) => Column(
-              children: [
-                _buildResponderCard(
-                  name: responder['name'] as String,
-                  type: responder['type'] as String,
-                  badge: responder['badge'] as String,
-                  eta: responder['eta'] as String,
-                  distance: responder['distance'] as String,
-                  status: responder['status'] as String,
-                  color: responder['color'] as Color,
-                  icon: responder['icon'] as IconData,
-                ),
-                if (responders.indexOf(responder) < responders.length - 1)
-                  const SizedBox(height: 12),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildResponderCard({
-    required String name,
-    required String type,
-    required String badge,
-    required String eta,
-    required String distance,
-    required String status,
-    required Color color,
-    required IconData icon,
-  }) {
-    return Container(
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: AppColors.background,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: AppColors.textSecondary.withOpacity(0.2)),
-      ),
-      child: Row(
-        children: [
-          Container(
-            width: 44,
-            height: 44,
-            decoration: BoxDecoration(
-              color: color.withOpacity(0.1),
-              shape: BoxShape.circle,
-            ),
-            child: Icon(icon, color: color, size: 22),
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  name,
-                  style: const TextStyle(
-                    fontSize: 15,
-                    fontWeight: FontWeight.w600,
-                    color: AppColors.primary,
-                  ),
-                ),
-                const SizedBox(height: 2),
-                Text(
-                  type,
-                  style: TextStyle(fontSize: 12, color: AppColors.textSecondary.withOpacity(0.6)),
-                ),
-                const SizedBox(height: 2),
-                Text(
-                  badge,
-                  style: TextStyle(fontSize: 11, color: AppColors.textSecondary.withOpacity(0.5)),
-                ),
-              ],
-            ),
-          ),
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.end,
-            children: [
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                decoration: BoxDecoration(
-                  color: color.withOpacity(0.1),
-                  borderRadius: BorderRadius.circular(16),
-                ),
-                child: Text(
-                  status,
-                  style: TextStyle(
-                    color: color,
-                    fontSize: 11,
-                    fontWeight: FontWeight.w500,
-                  ),
-                ),
-              ),
-              const SizedBox(height: 6),
-              Text(
-                eta,
-                style: const TextStyle(
-                  fontSize: 14,
-                  fontWeight: FontWeight.w700,
-                  color: AppColors.primary,
-                ),
-              ),
-              Text(
-                distance,
-                style: TextStyle(fontSize: 11, color: AppColors.textSecondary.withOpacity(0.5)),
-              ),
-            ],
           ),
         ],
       ),

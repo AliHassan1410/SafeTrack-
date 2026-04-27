@@ -1,8 +1,13 @@
+import 'dart:io';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:safetrack/utils/app_colors.dart';
 import 'package:safetrack/services/auth_service.dart';
 import 'package:safetrack/services/incident_services.dart';
+import 'package:safetrack/services/cloudinary_service.dart';
 import 'package:geolocator/geolocator.dart';
+import 'package:image_picker/image_picker.dart';
+import 'package:speech_to_text/speech_to_text.dart' as stt;
 import '../bottomNav/bottom_nav_bar.dart';
 import '../bottomNav/report.dart';
 import '../bottomNav/track.dart';
@@ -26,6 +31,7 @@ class _ReporterHomeState extends State<ReporterHome>
   String? _profileImageUrl;
   
   List<dynamic> _recentIncidents = [];
+  Map<String, dynamic>? _activeIncident;
   bool _isLoadingIncidents = true;
 
   @override
@@ -69,6 +75,13 @@ class _ReporterHomeState extends State<ReporterHome>
       if (mounted) {
         setState(() {
           _recentIncidents = incidents;
+          try {
+             _activeIncident = _recentIncidents.firstWhere(
+                (i) => i['status'] == 'accepted' || i['status'] == 'pending'
+             );
+          } catch(e) {
+             _activeIncident = null;
+          }
           _isLoadingIncidents = false;
         });
       }
@@ -142,8 +155,10 @@ class _ReporterHomeState extends State<ReporterHome>
               const SizedBox(height: 20),
 
               // Active Incident
-              _buildActiveIncident(),
-              const SizedBox(height: 20),
+              if (_activeIncident != null) ...[
+                _activeIncidentCard(),
+                const SizedBox(height: 20),
+              ],
 
               // Quick Actions
               _buildQuickActions(),
@@ -419,7 +434,23 @@ class _ReporterHomeState extends State<ReporterHome>
   }
 
   // Active Incident Card
-  Widget _buildActiveIncident() {
+  Widget _activeIncidentCard() {
+    if (_activeIncident == null) return const SizedBox.shrink();
+    
+    final idStr = _activeIncident!['_id']?.toString() ?? "0000";
+    final incCode = "INC-${idStr.length >= 4 ? idStr.substring(idStr.length - 4).toUpperCase() : idStr}";
+    final title = _activeIncident!['title'] ?? 'Incident';
+    final status = _activeIncident!['status'] ?? 'pending';
+    
+    String locationText = "Location unrecorded";
+    if (_activeIncident!['location'] != null && _activeIncident!['location']['coordinates'] != null) {
+        final coords = _activeIncident!['location']['coordinates'];
+        // coordinates are [lng, lat]
+        if (coords.length >= 2) {
+           locationText = "Lat: ${coords[1].toStringAsFixed(4)}, Lng: ${coords[0].toStringAsFixed(4)}";
+        }
+    }
+
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 20),
       child: Container(
@@ -447,13 +478,13 @@ class _ReporterHomeState extends State<ReporterHome>
                     color: AppColors.accent.withOpacity(0.1),
                     borderRadius: BorderRadius.circular(10),
                   ),
-                  child: const Row(
+                  child: Row(
                     children: [
-                      Icon(Icons.radar_rounded, color: AppColors.accent, size: 14),
-                      SizedBox(width: 6),
+                      const Icon(Icons.radar_rounded, color: AppColors.accent, size: 14),
+                      const SizedBox(width: 6),
                       Text(
-                        "ACTIVE INCIDENT",
-                        style: TextStyle(
+                        status.toUpperCase(),
+                        style: const TextStyle(
                           color: AppColors.accent,
                           fontWeight: FontWeight.w800,
                           fontSize: 10,
@@ -464,20 +495,26 @@ class _ReporterHomeState extends State<ReporterHome>
                   ),
                 ),
                 const Spacer(),
-                const Text("ETA: 8 min", style: TextStyle(fontWeight: FontWeight.w800, fontSize: 12, color: AppColors.primary)),
+                const Text("ETA: Calculating...", style: TextStyle(fontWeight: FontWeight.w800, fontSize: 12, color: AppColors.primary)),
               ],
             ),
             const SizedBox(height: 16),
-            const Text(
-              "Road Accident on Ring Road",
-              style: TextStyle(fontSize: 18, fontWeight: FontWeight.w800, color: AppColors.textPrimary),
+            Text(
+              title,
+              style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w800, color: AppColors.textPrimary),
             ),
             const SizedBox(height: 6),
             Row(
               children: [
                 Icon(Icons.location_on_rounded, size: 14, color: AppColors.textSecondary.withOpacity(0.5)),
                 const SizedBox(width: 4),
-                const Text("Near Thokar Niaz Baig", style: TextStyle(color: AppColors.textSecondary, fontSize: 13)),
+                Expanded(
+                  child: Text(
+                    locationText,
+                    style: const TextStyle(color: AppColors.textSecondary, fontSize: 13),
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
               ],
             ),
             const SizedBox(height: 20),
@@ -485,9 +522,9 @@ class _ReporterHomeState extends State<ReporterHome>
               children: [
                 Expanded(
                   child: LinearProgressIndicator(
-                    value: 0.6,
+                    value: status == 'accepted' ? 0.6 : 0.2,
                     backgroundColor: Colors.grey[100],
-                    valueColor: const AlwaysStoppedAnimation<Color>(AppColors.success),
+                    valueColor: AlwaysStoppedAnimation<Color>(status == 'accepted' ? AppColors.success : Colors.orange),
                     borderRadius: BorderRadius.circular(10),
                     minHeight: 8,
                   ),
@@ -551,16 +588,7 @@ class _ReporterHomeState extends State<ReporterHome>
   Widget _buildQuickItem(IconData icon, String label, Color color, int tabIndex) {
     return Expanded(
       child: GestureDetector(
-        onTap: () {
-          Navigator.push(
-            context,
-            MaterialPageRoute(
-               builder: (context) => ReportIncidentScreen(initialTabIndex: tabIndex),
-            ),
-          ).then((_) {
-             _fetchIncidents();
-          });
-        },
+        onTap: () => _handleQuickAction(label),
         child: Container(
           height: 110,
           margin: const EdgeInsets.symmetric(horizontal: 6),
@@ -598,6 +626,131 @@ class _ReporterHomeState extends State<ReporterHome>
         ),
       ),
     );
+  }
+
+  // --- QUICK ACTIONS LOGIC ---
+
+  Future<void> _submitQuickIncident(String title, String description, String type, {String? imageUrl}) async {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => const Center(child: CircularProgressIndicator(color: AppColors.primary)),
+    );
+
+    try {
+      Position position = await Geolocator.getCurrentPosition(desiredAccuracy: LocationAccuracy.high);
+      await IncidentService.createIncident(
+        title: title,
+        type: type,
+        description: description,
+        lat: position.latitude,
+        lng: position.longitude,
+        imageUrl: imageUrl,
+      );
+      if (mounted) Navigator.pop(context); // close loader
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("✅ Quick Report Submitted")));
+        _fetchIncidents();
+      }
+    } catch (e) {
+      if (mounted) Navigator.pop(context); // close loader
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("❌ Error: $e")));
+      }
+    }
+  }
+
+  void _handleQuickAction(String actionType) {
+    if (actionType == "Text") {
+      _showQuickTextDialog();
+    } else if (actionType == "Image") {
+      _handleQuickImage();
+    } else if (actionType == "Voice") {
+      _showQuickVoiceDialog();
+    }
+  }
+
+  void _showQuickTextDialog() {
+    final TextEditingController textCtrl = TextEditingController();
+    showDialog(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+          title: const Text("Quick Text Report"),
+          content: TextField(
+            controller: textCtrl,
+            maxLines: 4,
+            decoration: const InputDecoration(
+              hintText: "Describe the incident quickly...",
+              border: OutlineInputBorder(),
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text("Cancel", style: TextStyle(color: Colors.grey)),
+            ),
+            ElevatedButton(
+              onPressed: () {
+                if (textCtrl.text.isEmpty) return;
+                Navigator.pop(context);
+                _submitQuickIncident("Quick Report", textCtrl.text, "medical");
+              },
+              style: ElevatedButton.styleFrom(backgroundColor: AppColors.primary),
+              child: const Text("Submit", style: TextStyle(color: Colors.white)),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  Future<void> _handleQuickImage() async {
+    final picker = ImagePicker();
+    final XFile? image = await picker.pickImage(source: ImageSource.camera);
+    if (image == null) return;
+
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => const Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            CircularProgressIndicator(color: AppColors.primary),
+            SizedBox(height: 16),
+            Text("Uploading Photo...", style: TextStyle(color: Colors.white, fontSize: 16)),
+          ],
+        ),
+      ),
+    );
+
+    try {
+      final bytes = await image.readAsBytes();
+      String imageUrl = await CloudinaryService.uploadImage(
+        bytes: bytes,
+        fileName: image.name,
+        folder: 'quick_reports',
+      );
+      if (mounted) Navigator.pop(context); // close uploader
+      _submitQuickIncident("Photo Report", "Submitted a photo evidence.", "medical", imageUrl: imageUrl);
+    } catch (e) {
+      if (mounted) Navigator.pop(context); // close uploader
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Upload Failed: $e")));
+    }
+  }
+
+  void _showQuickVoiceDialog() {
+    // We will use a StatefulWidget inside the dialog for mic animation & state
+    showDialog(
+      context: context,
+      builder: (context) => const QuickVoiceDialog(),
+    ).then((result) {
+      if (result != null && result is String && result.isNotEmpty) {
+        _submitQuickIncident("Voice Report", result, "medical");
+      }
+    });
   }
 
   // Recent Reports Section
@@ -756,6 +909,114 @@ class _ReporterHomeState extends State<ReporterHome>
           ],
         ),
       ),
+    );
+  }
+}
+
+class QuickVoiceDialog extends StatefulWidget {
+  const QuickVoiceDialog({super.key});
+
+  @override
+  State<QuickVoiceDialog> createState() => _QuickVoiceDialogState();
+}
+
+class _QuickVoiceDialogState extends State<QuickVoiceDialog> {
+  final stt.SpeechToText _speech = stt.SpeechToText();
+  bool _isListening = false;
+  String _text = "Press the mic and start speaking";
+  bool _hasSpeech = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _initSpeech();
+  }
+
+  Future<void> _initSpeech() async {
+    try {
+      _hasSpeech = await _speech.initialize();
+      if (mounted) setState(() {});
+    } catch (e) {
+      print("Speech initialization failed: $e");
+    }
+  }
+
+  void _listen() async {
+    if (!_isListening) {
+      bool available = await _speech.initialize();
+      if (available) {
+        setState(() => _isListening = true);
+        _speech.listen(
+          onResult: (val) => setState(() {
+            _text = val.recognizedWords;
+          }),
+        );
+      }
+    } else {
+      setState(() => _isListening = false);
+      _speech.stop();
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+      title: const Text("Voice Report", textAlign: TextAlign.center),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              color: Colors.grey[100],
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Text(
+              _text,
+              style: const TextStyle(fontSize: 16),
+              textAlign: TextAlign.center,
+            ),
+          ),
+          const SizedBox(height: 24),
+          GestureDetector(
+            onTap: _hasSpeech ? _listen : null,
+            child: CircleAvatar(
+              radius: 35,
+              backgroundColor: _isListening ? Colors.red : AppColors.primary,
+              child: Icon(
+                _isListening ? Icons.mic : Icons.mic_none,
+                color: Colors.white,
+                size: 30,
+              ),
+            ),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            _isListening ? "Listening..." : "Tap to speak",
+            style: TextStyle(color: Colors.grey[600], fontSize: 12),
+          ),
+        ],
+      ),
+      actions: [
+        TextButton(
+          onPressed: () {
+            if (_isListening) _speech.stop();
+            Navigator.pop(context);
+          },
+          child: const Text("Cancel", style: TextStyle(color: Colors.grey)),
+        ),
+        ElevatedButton(
+          onPressed: () {
+            if (_isListening) _speech.stop();
+            if (_text.isEmpty || _text == "Press the mic and start speaking") return;
+            Navigator.pop(context, _text);
+          },
+          style: ElevatedButton.styleFrom(backgroundColor: AppColors.primary),
+          child: const Text("Submit", style: TextStyle(color: Colors.white)),
+        ),
+      ],
     );
   }
 }

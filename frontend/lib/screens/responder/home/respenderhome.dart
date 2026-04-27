@@ -2,6 +2,11 @@ import 'package:flutter/material.dart';
 import 'package:safetrack/utils/app_colors.dart';
 import 'package:safetrack/screens/responder/responderBottom/responderBottomBarNavigation.dart';
 import '../../chat/chat_screen.dart';
+import 'package:geolocator/geolocator.dart';
+import 'package:safetrack/services/auth_service.dart';
+import 'package:safetrack/services/incident_services.dart';
+import 'package:safetrack/screens/responder/responderBottom/nagivation.dart';
+
 
 class ResponderHome extends StatefulWidget {
   const ResponderHome({super.key});
@@ -12,10 +17,81 @@ class ResponderHome extends StatefulWidget {
 
 class _ResponderHomeState extends State<ResponderHome> {
   bool _isAvailable = true;
-  int _assignedCount = 3;
-  int _pendingCount = 8;
-  int _completedCount = 24;
+  int _assignedCount = 0;
+  int _pendingCount = 0;
+  int _completedCount = 0;
   int _notificationCount = 5;
+
+  bool _isLoading = false;
+  List<dynamic> _incidents = [];
+  Map<String, dynamic>? _activeIncident;
+  Position? _currentPosition;
+  String _locationError = '';
+
+  @override
+  void initState() {
+    super.initState();
+    _fetchData();
+  }
+
+  Future<void> _fetchData() async {
+    setState(() {
+      _isLoading = true;
+      _locationError = '';
+    });
+
+    try {
+      bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
+      if (!serviceEnabled) {
+        setState(() => _locationError = "Location Services Disabled");
+        return;
+      }
+
+      LocationPermission permission = await Geolocator.checkPermission();
+      if (permission == LocationPermission.denied) {
+        permission = await Geolocator.requestPermission();
+      }
+
+      if (permission == LocationPermission.denied || permission == LocationPermission.deniedForever) {
+        setState(() => _locationError = "Location Permission Denied");
+        return;
+      }
+
+      _currentPosition = await Geolocator.getCurrentPosition(desiredAccuracy: LocationAccuracy.high);
+
+      final type = AuthService().currentUser?.responderType ?? "medical";
+      
+      final incidents = await IncidentService.getNearbyIncidents(
+        lat: _currentPosition!.latitude,
+        lng: _currentPosition!.longitude,
+        type: type,
+      );
+
+      final assignedIncidents = await IncidentService.getAssignedIncidents();
+
+      if (mounted) {
+        setState(() {
+          _incidents = incidents;
+          _pendingCount = incidents.length;
+          _assignedCount = assignedIncidents.where((i) => i['status'] == 'accepted').length;
+          _completedCount = assignedIncidents.where((i) => i['status'] == 'completed').length;
+          
+          final acceptedIncidents = assignedIncidents.where((i) => i['status'] == 'accepted').toList();
+          _activeIncident = acceptedIncidents.isNotEmpty ? acceptedIncidents.first : null;
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() => _locationError = "Error fetching data: $e");
+      }
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+        });
+      }
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -26,17 +102,22 @@ class _ResponderHomeState extends State<ResponderHome> {
           children: [
             _header(),
             Expanded(
-              child: ListView(
-                padding: const EdgeInsets.all(16),
-                children: [
-                  _availabilityCard(),
-                  const SizedBox(height: 16),
-                  _statsRow(),
-                  const SizedBox(height: 20),
-                  _activeAssignment(),
-                  const SizedBox(height: 20),
-                  _nearbyIncidents(),
-                ],
+              child: RefreshIndicator(
+                onRefresh: _fetchData,
+                child: ListView(
+                  padding: const EdgeInsets.all(16),
+                  children: [
+                    _availabilityCard(),
+                    const SizedBox(height: 16),
+                    _statsRow(),
+                    const SizedBox(height: 20),
+                    if (_activeIncident != null) ...[
+                      _activeAssignment(),
+                      const SizedBox(height: 20),
+                    ],
+                    _nearbyIncidents(),
+                  ],
+                ),
               ),
             ),
           ],
@@ -84,9 +165,9 @@ class _ResponderHomeState extends State<ResponderHome> {
                 ),
               ),
               const SizedBox(height: 8),
-              const Text(
-                "Inspector Farhan Ali",
-                style: TextStyle(
+              Text(
+                AuthService().currentUser?.name ?? "Responder Profile",
+                style: const TextStyle(
                   color: AppColors.white,
                   fontSize: 18,
                   fontWeight: FontWeight.bold,
@@ -94,7 +175,7 @@ class _ResponderHomeState extends State<ResponderHome> {
               ),
               const SizedBox(height: 4),
               Text(
-                "Police ID: PB-45218",
+                "Unit: ${AuthService().currentUser?.responderType?.toUpperCase() ?? 'UNKNOWN'}",
                 style: TextStyle(
                   color: AppColors.white.withOpacity(0.8),
                   fontSize: 12,
@@ -596,6 +677,40 @@ class _ResponderHomeState extends State<ResponderHome> {
   }
 
   Widget _activeAssignment() {
+    if (_activeIncident == null) return const SizedBox.shrink();
+    
+    final idStr = _activeIncident!['_id']?.toString() ?? "0000";
+    final incCode = "INC-${idStr.length >= 4 ? idStr.substring(idStr.length - 4).toUpperCase() : idStr}";
+    final title = _activeIncident!['title'] ?? 'Incident';
+    final description = _activeIncident!['description'] ?? 'No description available.';
+    
+    String locationText = "Location unrecorded";
+    if (_activeIncident!['location'] != null && _activeIncident!['location']['coordinates'] != null) {
+        final coords = _activeIncident!['location']['coordinates'];
+        // coordinates are [lng, lat]
+        if (coords.length >= 2) {
+           locationText = "Lat: ${coords[1].toStringAsFixed(4)}, Lng: ${coords[0].toStringAsFixed(4)}";
+        }
+    }
+
+    String timeText = "Unknown Time";
+    if (_activeIncident!['createdAt'] != null) {
+       try {
+         final dt = DateTime.parse(_activeIncident!['createdAt']).toLocal();
+         final ampm = dt.hour >= 12 ? 'PM' : 'AM';
+         int hourStr = dt.hour % 12;
+         if (hourStr == 0) hourStr = 12;
+         timeText = "$hourStr:${dt.minute.toString().padLeft(2, '0')} $ampm, ${dt.day}/${dt.month}/${dt.year}";
+       } catch (e) { }
+    }
+
+    String reporterName = "Unknown Reporter";
+    String reporterPhone = "No Phone";
+    if (_activeIncident!['reporter'] != null && _activeIncident!['reporter'] is Map) {
+       reporterName = _activeIncident!['reporter']['name'] ?? "Unknown Reporter";
+       reporterPhone = _activeIncident!['reporter']['phone'] ?? "No Phone";
+    }
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -661,7 +776,7 @@ class _ResponderHomeState extends State<ResponderHome> {
                     ),
                   ),
                   Text(
-                    "INC-001",
+                    incCode,
                     style: TextStyle(
                       color: Colors.grey[500],
                       fontSize: 12,
@@ -671,9 +786,9 @@ class _ResponderHomeState extends State<ResponderHome> {
                 ],
               ),
               const SizedBox(height: 16),
-              const Text(
-                "Road Accident on Ring Road",
-                style: TextStyle(
+              Text(
+                title,
+                style: const TextStyle(
                   fontSize: 18,
                   fontWeight: FontWeight.w700,
                   color: AppColors.textPrimary,
@@ -681,7 +796,7 @@ class _ResponderHomeState extends State<ResponderHome> {
               ),
               const SizedBox(height: 8),
               Text(
-                "Two vehicles collision near Thokar Niaz Baig. Multiple injuries reported.",
+                description,
                 style: TextStyle(
                   color: Colors.grey[600],
                   fontSize: 14,
@@ -691,12 +806,37 @@ class _ResponderHomeState extends State<ResponderHome> {
               const SizedBox(height: 16),
               Row(
                 children: [
-                  Icon(Icons.location_on_outlined, color: AppColors.textSecondary.withOpacity(0.5), size: 18),
+                  Icon(Icons.person_outline, color: AppColors.textSecondary.withOpacity(0.5), size: 18),
                   const SizedBox(width: 6),
                   Text(
-                    "Ring Road, Near Thokar Niaz Baig",
-                    style: TextStyle(color: Colors.grey[600]),
+                    reporterName,
+                    style: TextStyle(color: Colors.grey[600], fontWeight: FontWeight.w600),
                   ),
+                ],
+              ),
+              const SizedBox(height: 8),
+              Row(
+                children: [
+                  Icon(Icons.phone_outlined, color: AppColors.textSecondary.withOpacity(0.5), size: 18),
+                  const SizedBox(width: 6),
+                  Text(
+                    reporterPhone,
+                    style: TextStyle(color: Colors.grey[600], fontWeight: FontWeight.w600),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 16),
+              Row(
+                children: [
+                  Icon(Icons.location_on_outlined, color: AppColors.textSecondary.withOpacity(0.5), size: 18),
+                  const SizedBox(width: 6),
+                  Expanded(
+                    child: Text(
+                      locationText,
+                      style: TextStyle(color: Colors.grey[600]),
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  )
                 ],
               ),
               const SizedBox(height: 8),
@@ -705,7 +845,7 @@ class _ResponderHomeState extends State<ResponderHome> {
                   Icon(Icons.access_time_outlined, color: AppColors.textSecondary.withOpacity(0.5), size: 18),
                   const SizedBox(width: 6),
                   Text(
-                    "Reported 30 minutes ago",
+                    timeText,
                     style: TextStyle(color: Colors.grey[600]),
                   ),
                 ],
@@ -715,7 +855,12 @@ class _ResponderHomeState extends State<ResponderHome> {
                 children: [
                   Expanded(
                     child: ElevatedButton.icon(
-                      onPressed: () {},
+                      onPressed: () {
+                          Navigator.push(
+                            context,
+                            MaterialPageRoute(builder: (context) => const Trackreporter()),
+                          );
+                      },
                       style: ElevatedButton.styleFrom(
                         backgroundColor: AppColors.primary,
                         foregroundColor: AppColors.white,
@@ -734,7 +879,11 @@ class _ResponderHomeState extends State<ResponderHome> {
                   const SizedBox(width: 12),
                   Expanded(
                     child: OutlinedButton.icon(
-                      onPressed: () {},
+                      onPressed: () {
+                         _showIncidentDetails(
+                            incCode, title, description, locationText, timeText, reporterName, reporterPhone
+                         );
+                      },
                       style: OutlinedButton.styleFrom(
                         padding: const EdgeInsets.symmetric(vertical: 14),
                         shape: RoundedRectangleBorder(
@@ -758,6 +907,97 @@ class _ResponderHomeState extends State<ResponderHome> {
     );
   }
 
+  void _showIncidentDetails(String code, String title, String description, String location, String time, String repName, String repPhone) {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (context) => Container(
+        padding: const EdgeInsets.all(24),
+        decoration: const BoxDecoration(
+          color: AppColors.white,
+          borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Center(
+              child: Container(
+                width: 40,
+                height: 4,
+                decoration: BoxDecoration(
+                  color: Colors.grey[300],
+                  borderRadius: BorderRadius.circular(2),
+                ),
+              ),
+            ),
+            const SizedBox(height: 20),
+            Text(code, style: TextStyle(color: AppColors.primary, fontWeight: FontWeight.bold)),
+            const SizedBox(height: 8),
+            Text(title, style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold)),
+            const SizedBox(height: 16),
+            const Text("Description", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+            const SizedBox(height: 4),
+            Text(description, style: TextStyle(color: Colors.grey[700])),
+            const SizedBox(height: 20),
+            const Text("Reporter Details", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+            const SizedBox(height: 8),
+            Row(
+              children: [
+                const Icon(Icons.person, size: 20, color: Colors.grey),
+                const SizedBox(width: 8),
+                Text(repName, style: const TextStyle(fontSize: 16)),
+              ],
+            ),
+            const SizedBox(height: 8),
+            Row(
+              children: [
+                const Icon(Icons.phone, size: 20, color: Colors.grey),
+                const SizedBox(width: 8),
+                Text(repPhone, style: const TextStyle(fontSize: 16)),
+              ],
+            ),
+            const SizedBox(height: 20),
+            const Text("Incident Location", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+            const SizedBox(height: 8),
+            Row(
+              children: [
+                const Icon(Icons.location_on, size: 20, color: Colors.grey),
+                const SizedBox(width: 8),
+                Expanded(child: Text(location, style: const TextStyle(fontSize: 16))),
+              ],
+            ),
+            const SizedBox(height: 20),
+            const Text("Reported Time", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+            const SizedBox(height: 8),
+            Row(
+              children: [
+                const Icon(Icons.access_time, size: 20, color: Colors.grey),
+                const SizedBox(width: 8),
+                Text(time, style: const TextStyle(fontSize: 16)),
+              ],
+            ),
+            const SizedBox(height: 30),
+            SizedBox(
+              width: double.infinity,
+              child: ElevatedButton(
+                onPressed: () => Navigator.pop(context),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: AppColors.primary,
+                  padding: const EdgeInsets.symmetric(vertical: 16),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                ),
+                child: const Text("Close", style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold)),
+              ),
+            ),
+            const SizedBox(height: 10),
+          ],
+        ),
+      ),
+    );
+  }
+
   Widget _nearbyIncidents() {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -773,40 +1013,77 @@ class _ResponderHomeState extends State<ResponderHome> {
                 color: AppColors.textPrimary,
               ),
             ),
-            TextButton(
-              onPressed: () {},
-              child: const Text(
-                "VIEW ALL",
-                style: TextStyle(
-                  color: AppColors.primary,
-                  fontWeight: FontWeight.w600,
-                  fontSize: 12,
+            if (_isLoading)
+              const SizedBox(
+                width: 20,
+                height: 20,
+                child: CircularProgressIndicator(strokeWidth: 2, color: AppColors.primary),
+              )
+            else
+              TextButton(
+                onPressed: _fetchData,
+                child: const Text(
+                  "REFRESH",
+                  style: TextStyle(
+                    color: AppColors.primary,
+                    fontWeight: FontWeight.w600,
+                    fontSize: 12,
+                  ),
                 ),
               ),
-            ),
           ],
         ),
         const SizedBox(height: 12),
-        _incidentTile(
-          priority: "MEDIUM",
-          priorityColor: const Color(0xFFFF9800),
-          title: "Mobile Snatching Incident",
-          location: "Anarkali Bazaar, Near Food Street",
-          distance: "2.3 km",
-        ),
-        const SizedBox(height: 12),
-        _incidentTile(
-          priority: "HIGH",
-          priorityColor: AppColors.secondary,
-          title: "Medical Emergency - Heart Attack",
-          location: "House 45, Block D, Model Town",
-          distance: "1.8 km",
-        ),
+        if (_locationError.isNotEmpty)
+          Padding(
+            padding: const EdgeInsets.all(8.0),
+            child: Text(_locationError, style: const TextStyle(color: Colors.red)),
+          )
+        else if (!_isLoading && _incidents.isEmpty)
+          const Padding(
+            padding: EdgeInsets.all(20.0),
+            child: Center(child: Text("No nearby incidents found.")),
+          )
+        else
+          ..._incidents.map((incident) {
+            final id = incident['_id']?.toString() ?? "";
+            final title = incident['title'] ?? 'Emergency';
+            
+            String locStr = 'Unknown Location';
+            if (incident['location'] != null && incident['location']['coordinates'] != null) {
+               final coords = incident['location']['coordinates'];
+               locStr = '${coords[1].toStringAsFixed(4)}, ${coords[0].toStringAsFixed(4)}';
+            }
+
+            String distanceStr = "Near";
+            if (_currentPosition != null && incident['location'] != null && incident['location']['coordinates'] != null) {
+              final incidentLng = incident['location']['coordinates'][0];
+              final incidentLat = incident['location']['coordinates'][1];
+              final distMeters = Geolocator.distanceBetween(
+                _currentPosition!.latitude, _currentPosition!.longitude, 
+                incidentLat, incidentLng
+              );
+              distanceStr = "${(distMeters / 1000).toStringAsFixed(1)} km";
+            }
+
+            return Padding(
+              padding: const EdgeInsets.only(bottom: 12.0),
+              child: _incidentTile(
+                id: id,
+                priority: "HIGH",
+                priorityColor: AppColors.secondary,
+                title: title,
+                location: locStr,
+                distance: distanceStr,
+              ),
+            );
+          }).toList(),
       ],
     );
   }
 
   Widget _incidentTile({
+    required String id,
     required String priority,
     required Color priorityColor,
     required String title,
@@ -887,7 +1164,18 @@ class _ResponderHomeState extends State<ResponderHome> {
               children: [
                 Expanded(
                   child: ElevatedButton(
-                    onPressed: () {},
+                    onPressed: () async {
+                      if (id.isNotEmpty) {
+                        try {
+                           setState(() => _isLoading = true);
+                           await IncidentService.acceptIncident(id);
+                           await _fetchData();
+                        } catch(e) {
+                           // Handle error
+                           setState(() => _isLoading = false);
+                        }
+                      }
+                    },
                     style: ElevatedButton.styleFrom(
                       backgroundColor: AppColors.primary,
                       foregroundColor: AppColors.white,
@@ -905,7 +1193,14 @@ class _ResponderHomeState extends State<ResponderHome> {
                 const SizedBox(width: 12),
                 Expanded(
                   child: OutlinedButton(
-                    onPressed: () {},
+                    onPressed: () {
+                      if (id.isNotEmpty) {
+                         setState(() {
+                            // Dummy decline by simply removing from list locally
+                            _incidents.removeWhere((i) => i['_id'] == id);
+                         });
+                      }
+                    },
                     style: OutlinedButton.styleFrom(
                       padding: const EdgeInsets.symmetric(vertical: 12),
                       shape: RoundedRectangleBorder(

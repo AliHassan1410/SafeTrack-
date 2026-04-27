@@ -1,5 +1,6 @@
 import User from "../models/User.js";
 import jwt from "jsonwebtoken";
+import sendEmail from "../utils/sendEmail.js";
 
 // 🔐 Generate JWT Token
 const generateToken = (id) => {
@@ -51,28 +52,117 @@ export const registerUser = async (req, res) => {
       });
     }
 
-    // ✅ 6. Check existing user
-    const existingUser = await User.findOne({ email });
+    // ✅ 6. Generate OTP
+    const otp = Math.floor(100000 + Math.random() * 900000).toString();
+    const otpExpiresAt = new Date(Date.now() + 15 * 60 * 1000); // 15 mins expiry
 
-    if (existingUser) {
-      return res.status(400).json({
-        message: "User already exists",
+    // ✅ 7. Check existing user
+    let user = await User.findOne({ email });
+
+    if (user) {
+      if (user.isEmailVerified) {
+        return res.status(400).json({
+          message: "User already exists and is verified. Please log in.",
+        });
+      } else {
+        // Update existing unverified user with new OTP and potentially new details
+        user.name = name.trim();
+        user.password = password; // Will be hashed by pre-save hook
+        user.phone = phone ? phone.trim() : "";
+        user.role = role;
+        user.responderType = role === "responder" ? responderType : null;
+        user.emailVerificationOTP = otp;
+        user.otpExpiresAt = otpExpiresAt;
+        await user.save();
+      }
+    } else {
+      // Create new user
+      user = await User.create({
+        name: name.trim(),
+        email: email.toLowerCase().trim(),
+        password,
+        phone: phone ? phone.trim() : "",
+        role,
+        responderType: role === "responder" ? responderType : null,
+        isEmailVerified: false,
+        emailVerificationOTP: otp,
+        otpExpiresAt,
       });
     }
 
-    // ✅ 7. Create user
-    const user = await User.create({
-      name: name.trim(),
-      email: email.toLowerCase().trim(),
-      password,
-      phone: phone ? phone.trim() : "",
-      role,
-      responderType: role === "responder" ? responderType : null,
+    // ✅ 8. Send OTP Email
+    const emailSent = await sendEmail({
+      to: user.email,
+      subject: "SafeTrack - Verify your Email",
+      html: `
+        <h2>Welcome to SafeTrack!</h2>
+        <p>Your email verification OTP is: <strong>${otp}</strong></p>
+        <p>This OTP will expire in 15 minutes.</p>
+        <p>Please enter this code in the app to complete your registration.</p>
+      `,
     });
 
-    // ✅ 8. Response
+    if (!emailSent) {
+      // It's a good practice to not fail registration completely if email fails, 
+      // but in this case, verification is required.
+      return res.status(500).json({
+        message: "Error sending verification email. Please try again later.",
+      });
+    }
+
+    // ✅ 9. Response
     res.status(201).json({
-      message: "User registered successfully",
+      message: "OTP sent to email. Please verify to complete registration.",
+      email: user.email,
+      requiresVerification: true
+    });
+
+  } catch (error) {
+    console.error("Register Error:", error);
+
+    res.status(500).json({
+      message: "Server error",
+      error: error.message,
+    });
+  }
+};
+
+// ================= VERIFY EMAIL (OTP) =================
+export const verifyEmail = async (req, res) => {
+  try {
+    const { email, otp } = req.body;
+
+    if (!email || !otp) {
+      return res.status(400).json({ message: "Email and OTP are required" });
+    }
+
+    const user = await User.findOne({ email: email.toLowerCase().trim() });
+
+    if (!user) {
+      return res.status(404).json({ message: "User not found" });
+    }
+
+    if (user.isEmailVerified) {
+      return res.status(400).json({ message: "Email is already verified. Please log in." });
+    }
+
+    if (user.emailVerificationOTP !== otp) {
+      return res.status(400).json({ message: "Invalid OTP" });
+    }
+
+    if (user.otpExpiresAt < new Date()) {
+      return res.status(400).json({ message: "OTP has expired. Please register again to get a new one." });
+    }
+
+    // Success! Verify user
+    user.isEmailVerified = true;
+    user.emailVerificationOTP = undefined;
+    user.otpExpiresAt = undefined;
+    await user.save();
+
+    // Log the user in immediately
+    res.status(200).json({
+      message: "Email verified successfully",
       user: {
         _id: user._id,
         name: user.name,
@@ -82,10 +172,8 @@ export const registerUser = async (req, res) => {
         token: generateToken(user._id),
       },
     });
-
   } catch (error) {
-    console.error("Register Error:", error);
-
+    console.error("Verify Email Error:", error);
     res.status(500).json({
       message: "Server error",
       error: error.message,
@@ -122,6 +210,13 @@ export const loginUser = async (req, res) => {
     if (!user) {
       return res.status(401).json({
         message: "Invalid credentials or wrong login role",
+      });
+    }
+
+    if (!user.isEmailVerified && user.authProvider === "local") {
+      return res.status(401).json({
+        message: "Please verify your email before logging in. If you lost the code, try registering again.",
+        requiresVerification: true
       });
     }
 

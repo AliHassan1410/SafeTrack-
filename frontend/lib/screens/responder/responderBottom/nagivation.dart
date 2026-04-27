@@ -1,6 +1,12 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:google_maps_flutter/google_maps_flutter.dart';
+import 'package:geolocator/geolocator.dart';
+import 'package:socket_io_client/socket_io_client.dart' as IO;
 import 'package:safetrack/utils/app_colors.dart';
 import 'package:safetrack/screens/responder/responderBottom/responderBottomBarNavigation.dart';
+import 'package:safetrack/services/incident_services.dart';
+import 'package:safetrack/services/auth_service.dart';
 
 class Trackreporter extends StatefulWidget {
   const Trackreporter({super.key});
@@ -13,6 +19,141 @@ class _TrackreporterState extends State<Trackreporter> {
   bool _isGpsActive = true;
   bool _isLiveTracking = true;
   String _selectedTeam = "All"; // All, Police, Ambulance
+  
+  GoogleMapController? _mapController;
+  LatLng? _responderLocation; // Current user (Responder)
+  LatLng? _reporterLocation; // Destination (Reporter)
+  late IO.Socket _socket;
+  String? _activeIncidentId;
+  Timer? _locationTimer;
+  bool _isLoading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _fetchActiveIncident();
+  }
+
+  Future<void> _fetchActiveIncident() async {
+    try {
+      final assigned = await IncidentService.getAssignedIncidents();
+      final active = assigned.where((i) => i['status'] == 'accepted').toList();
+      if (active.isNotEmpty) {
+        final incident = active.first;
+        _activeIncidentId = incident['_id'];
+        if (incident['location'] != null && incident['location']['coordinates'] != null) {
+          final coords = incident['location']['coordinates']; // [lng, lat]
+          if (coords.length >= 2) {
+             _reporterLocation = LatLng(coords[1], coords[0]);
+          }
+        }
+      }
+    } catch (e) {
+      print("Error fetching active incident for map: $e");
+    } finally {
+      _initLocationAndSocket();
+    }
+  }
+
+  Future<void> _initLocationAndSocket() async {
+    bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
+    if (!serviceEnabled) {
+      if (mounted) setState(() { _isGpsActive = false; _isLoading = false; });
+      return;
+    }
+
+    LocationPermission permission = await Geolocator.checkPermission();
+    if (permission == LocationPermission.denied) {
+      permission = await Geolocator.requestPermission();
+      if (permission != LocationPermission.whileInUse && permission != LocationPermission.always) {
+        if (mounted) setState(() { _isGpsActive = false; _isLoading = false; });
+        return;
+      }
+    }
+
+    Position pos = await Geolocator.getCurrentPosition(desiredAccuracy: LocationAccuracy.high);
+    if (mounted) {
+      setState(() {
+        _responderLocation = LatLng(pos.latitude, pos.longitude);
+        _isLoading = false;
+      });
+      _fitMapBounds();
+    }
+
+    // Initialize Socket
+    _socket = IO.io('http://10.0.2.2:5000', <String, dynamic>{
+      'transports': ['websocket'],
+      'autoConnect': false,
+    });
+    
+    _socket.connect();
+    
+    _socket.onConnect((_) {
+      print('Responder Connected to Socket');
+      if (_activeIncidentId != null) {
+        _socket.emit('join_incident', _activeIncidentId);
+        _broadcastLocation(pos.latitude, pos.longitude);
+      }
+    });
+
+    // Start location tracking loop
+    _locationTimer = Timer.periodic(const Duration(seconds: 5), (timer) async {
+      if (_isLiveTracking && _activeIncidentId != null) {
+        Position newPos = await Geolocator.getCurrentPosition(desiredAccuracy: LocationAccuracy.high);
+        if (mounted) {
+          setState(() {
+            _responderLocation = LatLng(newPos.latitude, newPos.longitude);
+          });
+        }
+        _broadcastLocation(newPos.latitude, newPos.longitude);
+      }
+    });
+  }
+
+  void _broadcastLocation(double lat, double lng) {
+    if (_activeIncidentId == null) return;
+    String responderId = AuthService().currentUser?.uid ?? "unknown";
+    _socket.emit('responder_location_update', {
+      'incidentId': _activeIncidentId,
+      'lat': lat,
+      'lng': lng,
+      'responderId': responderId
+    });
+  }
+
+  void _fitMapBounds() {
+    if (_mapController == null) return;
+
+    if (_reporterLocation != null && _responderLocation != null) {
+      LatLngBounds bounds;
+      if (_responderLocation!.latitude > _reporterLocation!.latitude &&
+          _responderLocation!.longitude > _reporterLocation!.longitude) {
+        bounds = LatLngBounds(southwest: _reporterLocation!, northeast: _responderLocation!);
+      } else if (_responderLocation!.longitude > _reporterLocation!.longitude) {
+        bounds = LatLngBounds(
+            southwest: LatLng(_responderLocation!.latitude, _reporterLocation!.longitude),
+            northeast: LatLng(_reporterLocation!.latitude, _responderLocation!.longitude));
+      } else if (_responderLocation!.latitude > _reporterLocation!.latitude) {
+        bounds = LatLngBounds(
+            southwest: LatLng(_reporterLocation!.latitude, _responderLocation!.longitude),
+            northeast: LatLng(_responderLocation!.latitude, _reporterLocation!.longitude));
+      } else {
+        bounds = LatLngBounds(southwest: _responderLocation!, northeast: _reporterLocation!);
+      }
+      
+      _mapController!.animateCamera(CameraUpdate.newLatLngBounds(bounds, 80));
+    } else if (_responderLocation != null) {
+      _mapController!.animateCamera(CameraUpdate.newLatLngZoom(_responderLocation!, 15));
+    }
+  }
+
+  @override
+  void dispose() {
+    _locationTimer?.cancel();
+    _socket.disconnect();
+    super.dispose();
+  }
+
   final List<Unit> _units = [
     Unit(
       id: "UNIT-001",
@@ -50,18 +191,6 @@ class _TrackreporterState extends State<Trackreporter> {
       latitude: 31.5189,
       longitude: 74.3556,
     ),
-    Unit(
-      id: "UNIT-004",
-      name: "Sergeant Ali Khan",
-      type: "Police",
-      badgeNumber: "PB-67234",
-      status: "On Scene",
-      estimatedTime: "Arrived",
-      distance: "0.2 km",
-      color: Colors.blue,
-      latitude: 31.5210,
-      longitude: 74.3598,
-    ),
   ];
 
   @override
@@ -95,14 +224,14 @@ class _TrackreporterState extends State<Trackreporter> {
         ],
       ),
       body: SafeArea(
-        child: SingleChildScrollView( // Make the entire page scrollable
+        child: SingleChildScrollView(
           child: Column(
             children: [
               _gpsStatus(),
               const SizedBox(height: 16),
               _mapView(),
               _infoPanel(filteredUnits),
-              const SizedBox(height: 20), // Add some bottom padding
+              const SizedBox(height: 20),
             ],
           ),
         ),
@@ -157,8 +286,8 @@ class _TrackreporterState extends State<Trackreporter> {
                 const SizedBox(height: 2),
                 Text(
                   _isGpsActive
-                      ? "Real-time location tracking enabled"
-                      : "Enable GPS for live tracking",
+                      ? "Real-time location sharing enabled"
+                      : "Enable GPS to share location",
                   style: TextStyle(
                     color: Colors.grey[600],
                     fontSize: 12,
@@ -168,10 +297,10 @@ class _TrackreporterState extends State<Trackreporter> {
             ),
           ),
           Switch(
-            value: _isGpsActive,
+            value: _isLiveTracking,
             onChanged: (value) {
               setState(() {
-                _isGpsActive = value;
+                _isLiveTracking = value;
               });
             },
             activeColor: Colors.green,
@@ -185,7 +314,7 @@ class _TrackreporterState extends State<Trackreporter> {
   Widget _mapView() {
     return Container(
       margin: const EdgeInsets.symmetric(horizontal: 16),
-      height: MediaQuery.of(context).size.height * 0.5, // Fixed height for map
+      height: MediaQuery.of(context).size.height * 0.5,
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(16),
@@ -199,73 +328,64 @@ class _TrackreporterState extends State<Trackreporter> {
       ),
       child: Stack(
         children: [
-          // Simulated Map with SingleChildScrollView
-          SingleChildScrollView(
-            child: Container(
-              width: double.infinity,
-              height: MediaQuery.of(context).size.height * 0.5, // Same height as parent
-              decoration: BoxDecoration(
-                color: const Color(0xFFE8F5E9),
-                borderRadius: BorderRadius.circular(16),
+          if (_isLoading)
+            const Center(child: CircularProgressIndicator(color: AppColors.primary))
+          else
+            ClipRRect(
+              borderRadius: BorderRadius.circular(16),
+              child: GoogleMap(
+                initialCameraPosition: CameraPosition(
+                  target: _responderLocation ?? const LatLng(0, 0),
+                  zoom: 14.0,
+                ),
+                onMapCreated: (controller) {
+                  _mapController = controller;
+                  _fitMapBounds();
+                },
+                myLocationEnabled: true,
+                myLocationButtonEnabled: false,
+                markers: {
+                  if (_responderLocation != null)
+                    Marker(
+                      markerId: const MarkerId('responder'),
+                      position: _responderLocation!,
+                      infoWindow: const InfoWindow(title: 'You'),
+                      icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueBlue),
+                    ),
+                  if (_reporterLocation != null)
+                    Marker(
+                      markerId: const MarkerId('reporter'),
+                      position: _reporterLocation!,
+                      infoWindow: const InfoWindow(title: 'Emergency Location'),
+                      icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueRed),
+                    ),
+                },
               ),
-              child: Center(
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
+            ),
+
+          // Top Info Pill
+          if (_activeIncidentId != null)
+            Positioned(
+              top: 16,
+              left: 16,
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                decoration: BoxDecoration(
+                  color: Colors.black.withOpacity(0.7),
+                  borderRadius: BorderRadius.circular(20),
+                ),
+                child: const Row(
                   children: [
-                    Container(
-                      padding: const EdgeInsets.all(20),
-                      decoration: BoxDecoration(
-                        color: AppColors.primary,
-                        borderRadius: BorderRadius.circular(100),
-                      ),
-                      child: const Icon(
-                        Icons.location_on,
-                        color: Colors.white,
-                        size: 50,
-                      ),
-                    ),
-                    const SizedBox(height: 20),
-                    const Text(
-                      "Live Emergency Map",
-                      style: TextStyle(
-                        fontSize: 18,
-                        fontWeight: FontWeight.w700,
-                        color: Colors.black87,
-                      ),
-                    ),
-                    const SizedBox(height: 8),
+                    Icon(Icons.share_location, color: Colors.greenAccent, size: 16),
+                    SizedBox(width: 8),
                     Text(
-                      "Tracking ${_units.length} emergency units",
-                      style: TextStyle(
-                        color: Colors.grey[600],
-                        fontSize: 14,
-                      ),
-                    ),
-                    const SizedBox(height: 20),
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        _mapLegendItem(
-                          color: Colors.green,
-                          label: "Police",
-                        ),
-                        const SizedBox(width: 16),
-                        _mapLegendItem(
-                          color: Colors.red,
-                          label: "Ambulance",
-                        ),
-                        const SizedBox(width: 16),
-                        _mapLegendItem(
-                          color: Colors.orange,
-                          label: "Rescue",
-                        ),
-                      ],
+                      "Broadcasting Location",
+                      style: TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold),
                     ),
                   ],
                 ),
               ),
             ),
-          ),
 
           // Map Controls
           Positioned(
@@ -285,12 +405,8 @@ class _TrackreporterState extends State<Trackreporter> {
               child: Column(
                 children: [
                   IconButton(
-                    onPressed: () {},
-                    icon: const Icon(Icons.zoom_in, color: AppColors.primary),
-                  ),
-                  IconButton(
-                    onPressed: () {},
-                    icon: const Icon(Icons.zoom_out, color: AppColors.primary),
+                    onPressed: () { _fitMapBounds(); },
+                    icon: const Icon(Icons.zoom_out_map, color: AppColors.primary),
                   ),
                   IconButton(
                     onPressed: () {

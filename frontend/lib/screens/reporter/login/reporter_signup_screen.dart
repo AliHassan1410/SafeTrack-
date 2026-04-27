@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:safetrack/utils/app_colors.dart';
 import '../../../services/auth_service.dart';
+import '../../auth/otp_verification_screen.dart';
 
 
 
@@ -95,7 +96,7 @@ class _SignupScreenState extends State<SignupScreen> {
     });
 
     try {
-      await _authService.signUp(
+      final result = await _authService.signUp(
         name: _fullNameController.text.trim(),
         email: _emailController.text.trim(),
         password: _passwordController.text.trim(),
@@ -104,7 +105,19 @@ class _SignupScreenState extends State<SignupScreen> {
       );
       
       if (mounted) {
-        Navigator.pushReplacementNamed(context, '/reporter-login');
+        if (result['requiresVerification'] == true) {
+          Navigator.pushReplacement(
+            context,
+            MaterialPageRoute(
+              builder: (context) => OtpVerificationScreen(
+                email: result['email'] ?? _emailController.text.trim(),
+                role: 'reporter',
+              ),
+            ),
+          );
+        } else {
+          Navigator.pushReplacementNamed(context, '/reporter-login');
+        }
       }
     } catch (e) {
       if (mounted) {

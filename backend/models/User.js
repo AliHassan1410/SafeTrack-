@@ -19,18 +19,18 @@ const userSchema = new mongoose.Schema(
       trim: true,
     },
 
-    // 🔒 Password
+    // 🔒 Password (optional for Google users)
     password: {
       type: String,
-      required: true,
       minlength: 6,
+      default: null,
     },
 
-    // 📱 Phone
+    // 📱 Phone (optional for Google users)
     phone: {
       type: String,
-      required: true,
       trim: true,
+      default: "",
     },
 
     // 👥 Role
@@ -45,7 +45,7 @@ const userSchema = new mongoose.Schema(
       type: String,
       enum: ["medical", "crime"],
       required: function () {
-        return this.role === "responder"; // only required for responders
+        return this.role === "responder";
       },
     },
 
@@ -54,13 +54,49 @@ const userSchema = new mongoose.Schema(
       lat: Number,
       lng: Number,
     },
+
+    // ─────────── Google OAuth Fields ───────────
+
+    // 🔑 Google ID (unique identifier from Google)
+    googleId: {
+      type: String,
+      default: null,
+      sparse: true, // allows multiple null values while keeping uniqueness
+    },
+
+    // 🖼️ Profile Picture URL (from Google)
+    profilePic: {
+      type: String,
+      default: null,
+    },
+
+    // 🌐 Auth Provider
+    authProvider: {
+      type: String,
+      enum: ["local", "google"],
+      default: "local",
+    },
+
+    // 📧 Email Verification
+    isEmailVerified: {
+      type: Boolean,
+      default: false,
+    },
+    emailVerificationOTP: {
+      type: String,
+      default: null,
+    },
+    otpExpiresAt: {
+      type: Date,
+      default: null,
+    },
   },
   { timestamps: true }
 );
 
-// 🔐 Hash password before saving
+// 🔐 Hash password before saving (only for local auth users)
 userSchema.pre("save", async function () {
-  if (!this.isModified("password")) {
+  if (!this.isModified("password") || !this.password) {
     return;
   }
 
@@ -70,6 +106,7 @@ userSchema.pre("save", async function () {
 
 // 🔑 Method to verify password
 userSchema.methods.matchPassword = async function (enteredPassword) {
+  if (!this.password) return false;
   return await bcrypt.compare(enteredPassword, this.password);
 };
 

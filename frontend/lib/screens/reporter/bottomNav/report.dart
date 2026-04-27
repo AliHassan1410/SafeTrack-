@@ -1,9 +1,12 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:safetrack/utils/app_colors.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:safetrack/services/incident_services.dart';
+import 'package:safetrack/services/cloudinary_service.dart';
+import 'bottom_nav_bar.dart';
 
 class ReportIncidentScreen extends StatefulWidget {
   final int initialTabIndex;
@@ -80,6 +83,17 @@ class _ReportIncidentScreenState extends State<ReportIncidentScreen> {
       // 🔥 Get real location
       Position position = await Geolocator.getCurrentPosition();
 
+      // 🔥 Upload image to Cloudinary if selected (Web & Mobile Compatible)
+      String? imageUrl;
+      if (_image != null) {
+        final bytes = await _image!.readAsBytes();
+        imageUrl = await CloudinaryService.uploadImage(
+          bytes: bytes,
+          fileName: _image!.name,
+          folder: 'incidents',
+        );
+      }
+
       // 🔥 Call backend using service
       await IncidentService.createIncident(
         title: _titleController.text,
@@ -87,6 +101,7 @@ class _ReportIncidentScreenState extends State<ReportIncidentScreen> {
         description: _descriptionController.text,
         lat: position.latitude,
         lng: position.longitude,
+        imageUrl: imageUrl,
       );
 
       ScaffoldMessenger.of(
@@ -170,6 +185,7 @@ class _ReportIncidentScreenState extends State<ReportIncidentScreen> {
           _submitBtn(),
         ],
       ),
+      bottomNavigationBar: const BottomNavBar(currentIndex: 1),
     );
   }
 
@@ -285,24 +301,22 @@ class _ReportIncidentScreenState extends State<ReportIncidentScreen> {
           color: Colors.white,
           borderRadius: BorderRadius.circular(20),
           border: Border.all(color: AppColors.primary.withOpacity(0.2)),
-          image:
-              _image != null
-                  ? DecorationImage(
-                    image: FileImage(File(_image!.path)),
-                    fit: BoxFit.cover,
-                  )
-                  : null,
         ),
-        child:
-            _image == null
-                ? const Center(
-                  child: Icon(
-                    Icons.camera_alt,
-                    size: 40,
-                    color: AppColors.primary,
-                  ),
-                )
-                : null,
+        child: _image == null
+            ? const Center(
+                child: Icon(
+                  Icons.camera_alt,
+                  size: 40,
+                  color: AppColors.primary,
+                ),
+              )
+            : ClipRRect(
+                borderRadius: BorderRadius.circular(20),
+                // XFile.path works as a blob URL on web
+                child: kIsWeb 
+                    ? Image.network(_image!.path, fit: BoxFit.cover, width: double.infinity) 
+                    : Image.file(File(_image!.path), fit: BoxFit.cover, width: double.infinity),
+              ),
       ),
     );
   }

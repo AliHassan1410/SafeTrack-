@@ -5,13 +5,14 @@ import Incident from "../models/Incident.js";
 ----------------------------------------*/
 export const createIncident = async (req, res) => {
   try {
-    const { title, type, description, location } = req.body;
+    const { title, type, description, location, imageUrl } = req.body;
 
     const incident = await Incident.create({
       reporter: req.user.id,
       title,
       type,
       description,
+      imageUrl,
       location: {
         type: "Point",
         coordinates: [location.lng, location.lat], // 🔥 IMPORTANT ORDER
@@ -83,6 +84,7 @@ export const acceptIncident = async (req, res) => {
 
     incident.status = "accepted";
     incident.assignedResponder = req.user.id;
+    incident.acceptedAt = new Date();
 
     await incident.save();
 
@@ -115,3 +117,49 @@ export const updateResponderLocation = async (req, res) => {
     res.status(500).json({ message: error.message });
   }
 };
+
+/* ---------------------------------------
+   6️⃣ GET ASSIGNED INCIDENTS (RESPONDER)
+----------------------------------------*/
+export const getAssignedIncidents = async (req, res) => {
+  try {
+    const incidents = await Incident.find({
+      assignedResponder: req.user.id,
+    })
+      .populate("reporter", "name phone")
+      .sort({ updatedAt: -1 });
+
+    res.status(200).json(incidents);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+/* ---------------------------------------
+   7️⃣ COMPLETE INCIDENT (RESPONDER)
+----------------------------------------*/
+export const completeIncident = async (req, res) => {
+  try {
+    const incident = await Incident.findById(req.params.id);
+
+    if (!incident) {
+      return res.status(404).json({ message: "Incident not found" });
+    }
+
+    if (incident.assignedResponder.toString() !== req.user.id) {
+      return res.status(403).json({ message: "Not authorized to complete this incident" });
+    }
+
+    incident.status = "completed";
+    incident.resolvedAt = new Date();
+
+    await incident.save();
+
+    res.status(200).json({
+      message: "Incident marked as completed",
+      incident,
+    });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};

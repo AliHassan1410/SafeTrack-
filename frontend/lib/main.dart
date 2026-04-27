@@ -1,5 +1,8 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart' show kDebugMode;
+import 'package:device_preview/device_preview.dart';
 import 'package:safetrack/utils/app_colors.dart';
+import 'services/google_auth_service.dart';
 
 import 'screens/auth/role_selection_screen.dart';
 import 'screens/admin/login/admin_login_screen.dart';
@@ -63,7 +66,21 @@ class AdminThemeWrapper extends StatelessWidget {
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  runApp(const SafeTrackApp());
+
+  // 🔐 Restore Google auth session from secure storage (auto-login)
+  await GoogleAuthService().init();
+
+  runApp(
+    DevicePreview(
+      // ✅ Enabled ONLY in debug/development — disabled automatically in release
+      enabled: kDebugMode,
+
+      // 📸 Optional: capture screenshots per device
+      // tools: const [...DevicePreview.defaultTools],
+
+      builder: (context) => const SafeTrackApp(),
+    ),
+  );
 }
 
 class SafeTrackApp extends StatelessWidget {
@@ -73,6 +90,14 @@ class SafeTrackApp extends StatelessWidget {
   Widget build(BuildContext context) {
     return MaterialApp(
       debugShowCheckedModeBanner: false,
+
+      // ─── DevicePreview hooks ───────────────────────────────
+      // Makes the app respond to DevicePreview's simulated locale
+      locale: DevicePreview.locale(context),
+      // Injects the simulated device's MediaQuery (screen size, pixel ratio…)
+      builder: DevicePreview.appBuilder,
+      // ──────────────────────────────────────────────────────
+
       theme: ThemeData(
         brightness: Brightness.light,
         primaryColor: AppColors.primary,
@@ -98,7 +123,8 @@ class SafeTrackApp extends StatelessWidget {
 
       routes: {
         // COMMON
-        '/': (context) => const RoleSelectionScreen(),
+        '/': (context) => const _SplashRouter(),
+        '/role-selection': (context) => const RoleSelectionScreen(),
 
         // ADMIN
         '/admin-login':
@@ -139,6 +165,68 @@ class SafeTrackApp extends StatelessWidget {
         '/history': (context) => const ResponderHistory(),
         '/profile': (context) => const ReporterProfile(),
       },
+    );
+  }
+}
+
+// ─────────────────────────────────────────────────────────────
+// SplashRouter — Handles auto-login on app startup
+// ─────────────────────────────────────────────────────────────
+class _SplashRouter extends StatefulWidget {
+  const _SplashRouter();
+
+  @override
+  State<_SplashRouter> createState() => _SplashRouterState();
+}
+
+class _SplashRouterState extends State<_SplashRouter> {
+  @override
+  void initState() {
+    super.initState();
+    _checkSession();
+  }
+
+  Future<void> _checkSession() async {
+    final googleAuth = GoogleAuthService();
+
+    // Verify whether the stored JWT is still valid
+    final bool valid = await googleAuth.verifyStoredToken();
+
+    if (!mounted) return;
+
+    if (valid && googleAuth.currentUser != null) {
+      final role = googleAuth.currentUser!.role;
+
+      // Route to the correct home screen based on role
+      switch (role) {
+        case 'responder':
+          Navigator.pushReplacementNamed(context, '/responder-home');
+          break;
+        case 'reporter':
+        default:
+          Navigator.pushReplacementNamed(context, '/reporter-home');
+          break;
+      }
+    } else {
+      // No valid session — show role selection
+      Navigator.pushReplacementNamed(context, '/role-selection');
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    // Brief loading screen while session is verified
+    return const Scaffold(
+      body: Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            CircularProgressIndicator(),
+            SizedBox(height: 16),
+            Text('Loading SafeTrack...'),
+          ],
+        ),
+      ),
     );
   }
 }

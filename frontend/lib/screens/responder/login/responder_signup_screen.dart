@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:safetrack/utils/app_colors.dart';
 
 import '../../../services/auth_service.dart';
+import '../../auth/otp_verification_screen.dart';
 
 class ResponderSignupPage extends StatefulWidget {
   const ResponderSignupPage({super.key});
@@ -49,17 +50,30 @@ class _ResponderSignupPageState extends State<ResponderSignupPage> {
     });
 
     try {
-      await _authService.signUp(
+      final result = await _authService.signUp(
         name: _nameController.text.trim(),
         email: _emailController.text.trim(),
         password: _passwordController.text.trim(),
         phone: _phoneController.text.trim(),
         role: 'responder',
+        responderType: _isPoliceSelected ? 'crime' : 'medical',
       );
       // Here you would also save specific responder details to backend (badge number, rank, etc.)
 
       if (mounted) {
-        Navigator.pushReplacementNamed(context, '/responder-login');
+        if (result['requiresVerification'] == true) {
+          Navigator.pushReplacement(
+            context,
+            MaterialPageRoute(
+              builder: (context) => OtpVerificationScreen(
+                email: result['email'] ?? _emailController.text.trim(),
+                role: 'responder',
+              ),
+            ),
+          );
+        } else {
+          Navigator.pushReplacementNamed(context, '/responder-login');
+        }
       }
     } catch (e) {
       if (mounted) {

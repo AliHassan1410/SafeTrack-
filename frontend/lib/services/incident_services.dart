@@ -28,6 +28,7 @@ class IncidentService {
     required String description,
     required double lat,
     required double lng,
+    String? imageUrl,
   }) async {
     try {
       final token = await _getToken();
@@ -53,6 +54,7 @@ class IncidentService {
           "type": mappedType,
           "description": description,
           "location": {"lat": lat, "lng": lng},
+          if (imageUrl != null) "imageUrl": imageUrl,
         }),
       );
 
@@ -144,6 +146,32 @@ class IncidentService {
       }
     } catch (e) {
       print("❌ Accept Error: $e");
+    }
+  }
+
+  /* ---------------------------------------
+     🩺 GET ASSIGNED INCIDENTS (RESPONDER)
+  ----------------------------------------*/
+  static Future<List<dynamic>> getAssignedIncidents() async {
+    try {
+      final token = await _getToken();
+
+      final response = await http.get(
+        Uri.parse("$baseUrl/incidents/assigned"),
+        headers: {
+          "Authorization": "Bearer $token",
+        },
+      );
+
+      if (response.statusCode == 200) {
+        return jsonDecode(response.body);
+      }
+
+      print("❌ Assigned Error: ${response.body}");
+      return [];
+    } catch (e) {
+      print("❌ Assigned Incident Error: $e");
+      return [];
     }
   }
 

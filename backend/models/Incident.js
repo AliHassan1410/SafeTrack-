@@ -28,6 +28,12 @@ const incidentSchema = new mongoose.Schema(
       type: String,
     },
 
+    // 🖼️ Image URL (Cloudinary)
+    imageUrl: {
+      type: String,
+      default: null,
+    },
+
     // 📍 LOCATION (UPDATED for geospatial queries)
     location: {
       type: {
@@ -58,6 +64,14 @@ const incidentSchema = new mongoose.Schema(
     responderLocation: {
       lat: Number,
       lng: Number,
+    },
+
+    // ⏱️ Timestamps for calculating average response times
+    acceptedAt: {
+      type: Date,
+    },
+    resolvedAt: {
+      type: Date,
     },
   },
   { timestamps: true }

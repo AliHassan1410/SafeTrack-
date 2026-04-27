@@ -5,6 +5,8 @@ import {
   getNearbyIncidents,
   acceptIncident,
   updateResponderLocation,
+  getAssignedIncidents,
+  completeIncident,
 } from "../controllers/incidentController.js";
 
 import authMiddleware from "../middleware/authMiddleware.js";
@@ -28,8 +30,14 @@ router.post("/", authMiddleware, createIncident);
 // Get nearby incidents (2km + type filter)
 router.get("/nearby", authMiddleware, getNearbyIncidents);
 
+// Get assigned incidents for a responder
+router.get("/assigned", authMiddleware, getAssignedIncidents);
+
 // Accept incident
 router.put("/:id/accept", authMiddleware, acceptIncident);
+
+// Complete incident
+router.put("/:id/complete", authMiddleware, completeIncident);
 
 // Update responder live location (tracking)
 router.put("/:id/location", authMiddleware, updateResponderLocation);
