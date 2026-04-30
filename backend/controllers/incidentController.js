@@ -5,7 +5,7 @@ import Incident from "../models/Incident.js";
 ----------------------------------------*/
 export const createIncident = async (req, res) => {
   try {
-    const { title, type, description, location, imageUrl } = req.body;
+    const { title, type, description, location, imageUrl, address } = req.body;
 
     const incident = await Incident.create({
       reporter: req.user.id,
@@ -15,9 +15,15 @@ export const createIncident = async (req, res) => {
       imageUrl,
       location: {
         type: "Point",
-        coordinates: [location.lng, location.lat], // 🔥 IMPORTANT ORDER
+        coordinates: [location.lng, location.lat],
+        address: address || location.address,
       },
     });
+
+    // Notify connected clients about the new incident
+    import("../index.js").then(({ io }) => {
+      io.emit("new_incident", incident);
+    }).catch(err => console.error("Socket emit error:", err));
 
     res.status(201).json({
       message: "Incident created successfully",

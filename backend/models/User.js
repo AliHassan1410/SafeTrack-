@@ -94,7 +94,7 @@ const userSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
-// 🔐 Hash password before saving (only for local auth users)
+// Hash password before saving (only for local auth users)
 userSchema.pre("save", async function () {
   if (!this.isModified("password") || !this.password) {
     return;

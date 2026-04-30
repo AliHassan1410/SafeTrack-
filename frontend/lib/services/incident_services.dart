@@ -29,6 +29,7 @@ class IncidentService {
     required double lat,
     required double lng,
     String? imageUrl,
+    String? address,
   }) async {
     try {
       final token = await _getToken();
@@ -53,7 +54,8 @@ class IncidentService {
           "title": title,
           "type": mappedType,
           "description": description,
-          "location": {"lat": lat, "lng": lng},
+          "location": {"lat": lat, "lng": lng, "address": address},
+          "address": address, // Sending address outside too just in case backend checks it.
           if (imageUrl != null) "imageUrl": imageUrl,
         }),
       );

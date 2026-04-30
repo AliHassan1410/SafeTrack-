@@ -5,6 +5,7 @@ import '../../chat/chat_screen.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:safetrack/services/auth_service.dart';
 import 'package:safetrack/services/incident_services.dart';
+import 'package:socket_io_client/socket_io_client.dart' as IO;
 import 'package:safetrack/screens/responder/responderBottom/nagivation.dart';
 
 
@@ -27,11 +28,73 @@ class _ResponderHomeState extends State<ResponderHome> {
   Map<String, dynamic>? _activeIncident;
   Position? _currentPosition;
   String _locationError = '';
+  late IO.Socket _socket;
 
   @override
   void initState() {
     super.initState();
     _fetchData();
+    _initSocket();
+  }
+
+  void _initSocket() {
+    _socket = IO.io('http://10.0.2.2:5000', <String, dynamic>{
+      'transports': ['websocket'],
+      'autoConnect': false,
+    });
+    
+    _socket.connect();
+    
+    _socket.onConnect((_) {
+      print('Responder Home Connected to Socket');
+    });
+
+    _socket.on('new_incident', (data) {
+      print('New Incident Received: $data');
+      if (_currentPosition != null && data['location'] != null && data['location']['coordinates'] != null) {
+        final coords = data['location']['coordinates'];
+        final incLat = coords[1];
+        final incLng = coords[0];
+
+        double distanceInMeters = Geolocator.distanceBetween(
+          _currentPosition!.latitude, 
+          _currentPosition!.longitude, 
+          incLat, 
+          incLng
+        );
+
+        final type = AuthService().currentUser?.responderType ?? "medical";
+
+        // Check if under 2km and matches type
+        if (distanceInMeters <= 2000 && data['type'] == type) {
+          // Increment notification count or show a snackbar
+          if (mounted) {
+            setState(() {
+              _notificationCount++;
+            });
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text('New ${data['type']} incident nearby (${(distanceInMeters / 1000).toStringAsFixed(1)} km)!'),
+                backgroundColor: Colors.redAccent,
+                duration: const Duration(seconds: 5),
+                action: SnackBarAction(
+                  label: 'VIEW',
+                  textColor: Colors.white,
+                  onPressed: _fetchData,
+                ),
+              )
+            );
+            _fetchData(); // Refresh the list
+          }
+        }
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    _socket.disconnect();
+    super.dispose();
   }
 
   Future<void> _fetchData() async {

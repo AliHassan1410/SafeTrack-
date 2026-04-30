@@ -2,21 +2,21 @@ import mongoose from "mongoose";
 
 const incidentSchema = new mongoose.Schema(
   {
-    // 👤 Who reported
+    //  Who reported
     reporter: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "User",
       required: true,
     },
 
-    // 🚨 Type of incident (IMPORTANT for filtering)
+    //  Type of incident (IMPORTANT for filtering)
     type: {
       type: String,
       enum: ["medical", "crime"], // restrict values
       required: true,
     },
 
-    // 📝 Title
+    //  Title
     title: {
       type: String,
       required: true,
@@ -44,6 +44,9 @@ const incidentSchema = new mongoose.Schema(
       coordinates: {
         type: [Number], // [lng, lat]
         required: true,
+      },
+      address: {
+        type: String,
       },
     },
 

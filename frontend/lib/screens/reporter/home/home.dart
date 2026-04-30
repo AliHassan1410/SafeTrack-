@@ -6,6 +6,7 @@ import 'package:safetrack/services/auth_service.dart';
 import 'package:safetrack/services/incident_services.dart';
 import 'package:safetrack/services/cloudinary_service.dart';
 import 'package:geolocator/geolocator.dart';
+import 'package:geocoding/geocoding.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:speech_to_text/speech_to_text.dart' as stt;
 import '../bottomNav/bottom_nav_bar.dart';
@@ -443,11 +444,15 @@ class _ReporterHomeState extends State<ReporterHome>
     final status = _activeIncident!['status'] ?? 'pending';
     
     String locationText = "Location unrecorded";
-    if (_activeIncident!['location'] != null && _activeIncident!['location']['coordinates'] != null) {
-        final coords = _activeIncident!['location']['coordinates'];
-        // coordinates are [lng, lat]
-        if (coords.length >= 2) {
-           locationText = "Lat: ${coords[1].toStringAsFixed(4)}, Lng: ${coords[0].toStringAsFixed(4)}";
+    if (_activeIncident!['location'] != null) {
+        final loc = _activeIncident!['location'];
+        if (loc['address'] != null && loc['address'].toString().isNotEmpty) {
+           locationText = loc['address'];
+        } else if (loc['coordinates'] != null) {
+           final coords = loc['coordinates'];
+           if (coords.length >= 2) {
+              locationText = "${coords[1].toStringAsFixed(4)}, ${coords[0].toStringAsFixed(4)}";
+           }
         }
     }
 
@@ -639,6 +644,19 @@ class _ReporterHomeState extends State<ReporterHome>
 
     try {
       Position position = await Geolocator.getCurrentPosition(desiredAccuracy: LocationAccuracy.high);
+      
+      // Fetch Address
+      String address = "${position.latitude.toStringAsFixed(4)}, ${position.longitude.toStringAsFixed(4)}";
+      try {
+        List<Placemark> placemarks = await placemarkFromCoordinates(position.latitude, position.longitude);
+        if (placemarks.isNotEmpty) {
+          Placemark place = placemarks[0];
+          address = "${place.street}, ${place.locality}, ${place.country}";
+        }
+      } catch (e) {
+        print("Geocoding Error in Quick Submit: $e");
+      }
+
       await IncidentService.createIncident(
         title: title,
         type: type,
@@ -646,6 +664,7 @@ class _ReporterHomeState extends State<ReporterHome>
         lat: position.latitude,
         lng: position.longitude,
         imageUrl: imageUrl,
+        address: address, // Added address
       );
       if (mounted) Navigator.pop(context); // close loader
       if (mounted) {
@@ -798,8 +817,16 @@ class _ReporterHomeState extends State<ReporterHome>
                       String code = "INC-${id.length >= 4 ? id.substring(id.length - 4).toUpperCase() : id}";
                       
                       String locationText = "Location unrecorded";
-                      if (incident['location'] != null && incident['location']['lat'] != null) {
-                         locationText = "Lat: ${incident['location']['lat'].toStringAsFixed(4)}, Lng: ${incident['location']['lng'].toStringAsFixed(4)}";
+                      if (incident['location'] != null) {
+                        final loc = incident['location'];
+                        if (loc['address'] != null && loc['address'].toString().isNotEmpty) {
+                          locationText = loc['address'];
+                        } else if (loc['coordinates'] != null) {
+                          final coords = loc['coordinates'];
+                          if (coords.length >= 2) {
+                            locationText = "${coords[1].toStringAsFixed(4)}, ${coords[0].toStringAsFixed(4)}";
+                          }
+                        }
                       }
                       
                       return _buildReportCard(

@@ -37,6 +37,17 @@ io.on("connection", (socket) => {
     }
   });
 
+  // Reporter sends live location -> Broadcast to Responder
+  socket.on("reporter_location_update", (data) => {
+    // data format: { incidentId, lat, lng }
+    if (data.incidentId) {
+      io.to(data.incidentId).emit("reporter_location_update", {
+        lat: data.lat,
+        lng: data.lng,
+      });
+    }
+  });
+
   socket.on("disconnect", () => {
     console.log("❌ User disconnected:", socket.id);
   });

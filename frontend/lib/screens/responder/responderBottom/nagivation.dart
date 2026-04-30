@@ -96,6 +96,16 @@ class _TrackreporterState extends State<Trackreporter> {
       }
     });
 
+    _socket.on('reporter_location_update', (data) {
+      print("Reporter Location Updated: $data");
+      if (mounted) {
+        setState(() {
+          _reporterLocation = LatLng(data['lat'], data['lng']);
+        });
+        _fitMapBounds();
+      }
+    });
+
     // Start location tracking loop
     _locationTimer = Timer.periodic(const Duration(seconds: 5), (timer) async {
       if (_isLiveTracking && _activeIncidentId != null) {

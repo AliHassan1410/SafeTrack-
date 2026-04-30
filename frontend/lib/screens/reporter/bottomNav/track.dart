@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:geolocator/geolocator.dart';
@@ -20,6 +21,7 @@ class _TrackResponderState extends State<TrackResponder> {
   late IO.Socket _socket;
   
   bool _isLoading = true;
+  Timer? _locationTimer;
 
   @override
   void initState() {
@@ -78,6 +80,23 @@ class _TrackResponderState extends State<TrackResponder> {
         _fitMapBounds();
       }
     });
+
+    // Broadcast reporter's live location
+    _locationTimer = Timer.periodic(const Duration(seconds: 5), (timer) async {
+      if (incidentId != "test_incident_id") {
+        Position newPos = await Geolocator.getCurrentPosition(desiredAccuracy: LocationAccuracy.high);
+        if (mounted) {
+          setState(() {
+            _reporterLocation = LatLng(newPos.latitude, newPos.longitude);
+          });
+        }
+        _socket.emit('reporter_location_update', {
+          'incidentId': incidentId,
+          'lat': newPos.latitude,
+          'lng': newPos.longitude,
+        });
+      }
+    });
   }
 
   void _fitMapBounds() {
@@ -108,6 +127,7 @@ class _TrackResponderState extends State<TrackResponder> {
 
   @override
   void dispose() {
+    _locationTimer?.cancel();
     _socket.disconnect();
     super.dispose();
   }

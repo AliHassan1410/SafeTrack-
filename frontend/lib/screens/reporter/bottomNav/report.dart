@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:safetrack/utils/app_colors.dart';
 import 'package:geolocator/geolocator.dart';
+import 'package:geocoding/geocoding.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:safetrack/services/incident_services.dart';
 import 'package:safetrack/services/cloudinary_service.dart';
@@ -53,8 +54,20 @@ class _ReportIncidentScreenState extends State<ReportIncidentScreen> {
       }
 
       Position pos = await Geolocator.getCurrentPosition();
-      _locationController.text =
-          "${pos.latitude.toStringAsFixed(4)}, ${pos.longitude.toStringAsFixed(4)}";
+      
+      // Try to get the address
+      String address = "${pos.latitude.toStringAsFixed(4)}, ${pos.longitude.toStringAsFixed(4)}";
+      try {
+        List<Placemark> placemarks = await placemarkFromCoordinates(pos.latitude, pos.longitude);
+        if (placemarks.isNotEmpty) {
+          Placemark place = placemarks[0];
+          address = "${place.street}, ${place.locality}, ${place.country}";
+        }
+      } catch (e) {
+        print("Geocoding Error: $e");
+      }
+      
+      _locationController.text = address;
     } catch (e) {
       _locationController.text = "Location Error";
     }
@@ -102,6 +115,7 @@ class _ReportIncidentScreenState extends State<ReportIncidentScreen> {
         lat: position.latitude,
         lng: position.longitude,
         imageUrl: imageUrl,
+        address: _locationController.text, // Sending address
       );
 
       ScaffoldMessenger.of(
