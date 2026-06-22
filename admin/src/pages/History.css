@@ -1,0 +1,164 @@
+/* History Overview Grid */
+.history-overview-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 18px;
+  margin-top: 24px;
+}
+
+@media (max-width: 1000px) {
+  .history-overview-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+@media (max-width: 600px) {
+  .history-overview-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* History Stat Cards */
+.history-stat-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 20px 22px;
+  box-shadow: var(--shadow-card);
+  transition: var(--transition);
+}
+
+.history-stat-card:hover {
+  border-color: rgba(255,255,255,0.1);
+  transform: translateY(-1px);
+}
+
+.history-stat-card.history-resolved {
+  border-left: 3px solid #22c55e;
+}
+
+.history-stat-card.history-cancelled {
+  border-left: 3px solid #ef4444;
+}
+
+.history-stat-card.history-chart-mini {
+  padding: 16px 20px;
+}
+
+.history-stat-val {
+  font-size: 36px;
+  font-weight: 800;
+  line-height: 1;
+  margin-bottom: 6px;
+}
+
+.history-stat-lbl {
+  font-size: 12px;
+  color: var(--text-muted);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.history-stat-sub {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin-top: 6px;
+}
+
+/* Row hover */
+.history-row {
+  transition: background 0.15s;
+}
+
+.history-row:hover {
+  background: rgba(255, 255, 255, 0.025) !important;
+}
+
+.history-row.expanded {
+  background: rgba(79, 110, 247, 0.05) !important;
+}
+
+/* Expandable Detail Row */
+.history-detail-row td {
+  padding: 0 !important;
+  border-bottom: 1px solid var(--border);
+}
+
+.history-detail-panel {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 16px;
+  padding: 20px 24px;
+  background: rgba(79, 110, 247, 0.03);
+  border-top: 1px solid rgba(79, 110, 247, 0.12);
+  animation: slideDown 0.2s ease-out;
+}
+
+@keyframes slideDown {
+  from { opacity: 0; transform: translateY(-6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@media (max-width: 900px) {
+  .history-detail-panel {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+.detail-section {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.detail-label {
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+}
+
+.detail-value {
+  font-size: 13px;
+  color: var(--text-secondary);
+  word-break: break-all;
+}
+
+.detail-mono {
+  font-family: monospace;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+/* Duration Badge */
+.duration-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 4px 9px;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+
+/* Location link (if not in Incidents.css) */
+.location-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  color: var(--accent-primary);
+  text-decoration: none;
+  transition: var(--transition);
+}
+
+.location-link:hover {
+  color: var(--text-primary);
+  text-decoration: underline;
+}

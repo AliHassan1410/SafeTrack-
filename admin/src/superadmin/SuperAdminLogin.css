@@ -1,0 +1,45 @@
+/* Super Admin Login — extra styles on top of the shared Login.css */
+
+/* Override orb colors to purple for super admin */
+.sa-login-page .sa-orb-1 {
+  background: radial-gradient(circle, rgba(139, 92, 246, 0.18) 0%, transparent 70%);
+  top: -15%;
+  right: -10%;
+  width: 500px;
+  height: 500px;
+}
+
+.sa-login-page .sa-orb-2 {
+  background: radial-gradient(circle, rgba(168, 85, 247, 0.12) 0%, transparent 70%);
+  bottom: -15%;
+  left: -10%;
+  width: 400px;
+  height: 400px;
+}
+
+/* Back button */
+.sa-back-btn {
+  position: fixed;
+  top: 20px;
+  left: 24px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: rgba(255,255,255,0.06);
+  border: 1px solid rgba(255,255,255,0.12);
+  color: var(--text-secondary);
+  padding: 8px 16px;
+  border-radius: var(--radius-full);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: var(--transition);
+  z-index: 100;
+  font-family: var(--font);
+}
+
+.sa-back-btn:hover {
+  background: rgba(255,255,255,0.10);
+  color: var(--text-primary);
+  border-color: rgba(255,255,255,0.2);
+}
